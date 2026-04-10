@@ -3249,7 +3249,9 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
     const custoVal=parseFloat(dados.custo_individual)||null;
     const metaVal=parseInt(dados.meta_desl)||0;
-    const{error}=await supabaseClient.from("clients")
+    console.log("Editando cliente:", editando.codigo_cliente, editando.filial);
+    console.log("Dados a salvar:", {nome_cliente:dados.nome,mensalidade:mensVal,bairro:dados.bairro,area:dados.area,custo_individual:custoVal,meta_desl:metaVal});
+    const{data:updateData,error}=await supabaseClient.from("clients")
       .update({
         nome_cliente:dados.nome,
         mensalidade:mensVal,
@@ -3259,13 +3261,19 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
         meta_desl:metaVal
       })
       .eq("codigo_cliente",editando.codigo_cliente)
-      .eq("filial",editando.filial);
+      .eq("filial",editando.filial)
+      .select();
+    console.log("Resultado update:", updateData, error);
     setSalvando(false);
     if(!error){
-      setEditando(null);
-      setMsgSalvo("✅ Cliente atualizado!");
-      setTimeout(()=>setMsgSalvo(""),4000);
-      onRefresh();
+      if(!updateData||updateData.length===0){
+        setMsgSalvo("⚠️ Nenhum registro atualizado — verifique código e filial");
+      } else {
+        setEditando(null);
+        setMsgSalvo("✅ Cliente atualizado! ("+updateData.length+" registro)");
+        setTimeout(()=>setMsgSalvo(""),4000);
+        onRefresh();
+      }
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
