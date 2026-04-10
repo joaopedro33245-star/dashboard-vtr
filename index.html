@@ -3116,7 +3116,32 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
 
   const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);onRefresh();},[supabaseClient,onRefresh]);
   async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
-  async function salvarEdicao(dados){setSalvando(true);const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;const custoVal=parseFloat(dados.custo_individual)||null;const{error}=await supabaseClient.from("clients").update({nome_cliente:dados.nome,mensalidade:mensVal,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),custo_individual:custoVal,meta_desl:parseInt(dados.meta_desl)||0}).eq("codigo_cliente",editando.codigo_cliente);setSalvando(false);if(!error){setEditando(null);setMsgSalvo("✅ Cliente atualizado!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
+  async function salvarEdicao(dados){
+    setSalvando(true);
+    const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
+    const custoVal=parseFloat(dados.custo_individual)||null;
+    const metaVal=parseInt(dados.meta_desl)||0;
+    const{error}=await supabaseClient.from("clients")
+      .update({
+        nome_cliente:dados.nome,
+        mensalidade:mensVal,
+        bairro:sanitizeStr(dados.bairro||"",100),
+        area:sanitizeStr(dados.area||"",10),
+        custo_individual:custoVal,
+        meta_desl:metaVal
+      })
+      .eq("codigo_cliente",editando.codigo_cliente)
+      .eq("filial",editando.filial);
+    setSalvando(false);
+    if(!error){
+      setEditando(null);
+      setMsgSalvo("✅ Cliente atualizado!");
+      setTimeout(()=>setMsgSalvo(""),4000);
+      onRefresh();
+    }else{
+      setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
+    }
+  }
   function exportarXLSX(){
     const data=filtrados.map(c=>{const desl=dispMap[`${c.codigo_cliente}||${c.filial}`]||0;return{"Código":c.codigo_cliente,"Nome":c.nome_cliente||"","Filial":c.filial||"","Cidade":c.cidade||"","Bairro":c.bairro||"","Mensalidade (R$)":parseFloat(c.mensalidade)||0,"Custo/Desl (R$)":c.custo_individual||CUSTO_FISCAL,"Status":c.status||"","Deslocamentos":desl,"Custo Total (R$)":desl*(c.custo_individual||CUSTO_FISCAL),"Resultado (R$)":(parseFloat(c.mensalidade)||0)-desl*(c.custo_individual||CUSTO_FISCAL)};});
     const ws=XLSX.utils.json_to_sheet(data);
