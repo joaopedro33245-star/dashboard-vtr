@@ -3011,7 +3011,9 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
       const semanasNoArquivo=new Set();
       for(const r of mapped){const dt=parseDataHora(r.data_hora);if(dt)semanasNoArquivo.add(getWeekKey(dt));}
       const semanasJaImportadas=new Set();
-      for(const d of dispatches){const dt=parseDataHora(d.data_hora);if(dt){const wk=getWeekKey(dt);if(semanasNoArquivo.has(wk))semanasJaImportadas.add(wk);}}
+      // Filtra só os deslocamentos da MESMA filial para detectar duplicatas
+      const despachosDaFilial=dispatches.filter(d=>!filialForcada||d.filial===filialForcada);
+      for(const d of despachosDaFilial){const dt=parseDataHora(d.data_hora);if(dt){const wk=getWeekKey(dt);if(semanasNoArquivo.has(wk))semanasJaImportadas.add(wk);}}
       const mesesJaImportados={};
       for(const wk of semanasJaImportadas){const[wy,wm]=wk.split("-");const mk=`${wy}-${wm}`;if(mesesNoArquivo[mk])mesesJaImportados[mk]=true;}
       const normais=mapped.filter(r=>!r.portaria_inteligente).length;
