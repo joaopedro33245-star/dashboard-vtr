@@ -744,6 +744,16 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
   const [periodoB, setPeriodoB] = useState("");
   const [clienteModal, setClienteModal] = useState(null);
 
+  // Mapa de nomes reais dos clientes
+  const nomeMapComp=useMemo(()=>{
+    const m={};
+    for(const cl of clients){
+      const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
+      if(n)m[cl.codigo_cliente]=n;
+    }
+    return m;
+  },[clients]);
+
   const periodos = useMemo(()=>{
     const s=new Set();
     for (const d of dispatchesFiltrados){const dt=parseDataHora(d.data_hora);if(dt)s.add(isWeek?getWeekKey(dt):getMonthKey(dt));}
@@ -767,7 +777,8 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipo==="normal"&&d.portaria_inteligente)continue;
       if(tipo==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:d.nome_cliente||d.codigo_cliente,filial:d.filial,total:0};
+      const nome=nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nome,filial:d.filial,total:0};
       clienteMap[key].total++;
     }
     const clientes=Object.values(clienteMap).sort((a,b)=>b.total-a.total);
@@ -3225,15 +3236,13 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     for(const c of clients)
       if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))
         s.add(`${c.codigo_cliente}||${c.filial}`);
-    // 2. Pelo código que aparece em deslocamentos PI
-    const codigosPI=new Set(dispatches.filter(x=>x.portaria_inteligente).map(d=>String(d.codigo_cliente)));
-    for(const c of clients)
-      if(codigosPI.has(String(c.codigo_cliente)))
-        s.add(`${c.codigo_cliente}||${c.filial}`);
+    // 2. Pelo código+filial que aparece em deslocamentos PI
+    for(const d of dispatches.filter(x=>x.portaria_inteligente))
+      s.add(`${d.codigo_cliente}||${d.filial}`);
     return s;
   },[dispatches,clients]);
 
-  // Filtra direto pelo nome também para garantir
+  // Verifica se é PI por chave código+filial ou por nome
   const isPI=(c)=>{
     if(piClienteKeys.has(`${c.codigo_cliente}||${c.filial}`))return true;
     if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))return true;
