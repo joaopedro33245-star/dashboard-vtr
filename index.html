@@ -2759,6 +2759,117 @@ const MENSALIDADES_PADRAO=[
   {filialKey:"3 LUXUS SERVICOS E TECNOLOGIA LTDA",valor:88.44},
 ];
 
+// ── Importação de Clientes Portaria Inteligente ──
+function PiClientImport({ onImportClients, clients, supabaseClient }) {
+  const fileRef=useRef();
+  const [preview,setPreview]=useState(null);
+  const [fileName,setFileName]=useState("");
+  const [erro,setErro]=useState("");
+  const [msg,setMsg]=useState("");
+
+  function readExcel(file,onSuccess,onError){
+    const reader=new FileReader();
+    reader.onload=e=>{
+      try{
+        const wb=XLSX.read(e.target.result,{type:"binary"});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(ws,{defval:""});
+        onSuccess(rows);
+      }catch(err){onError("Erro ao ler arquivo: "+err.message);}
+    };
+    reader.readAsBinaryString(file);
+  }
+
+  function handleFile(e){
+    const file=e.target.files[0];if(!file)return;
+    setErro("");setFileName(file.name);setPreview(null);
+    readExcel(file,rows=>{
+      const mapped=rows.map(r=>{
+        const codigo=String(r["Conta"]||r["conta"]||r["Código"]||r["codigo"]||r["CONTA"]||"").trim();
+        const nome=String(r["Fantasia (Razão Social)"]||r["Fantasia"]||r["fantasia"]||r["Nome"]||r["nome"]||"").trim();
+        const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"").trim();
+        const cidadeRaw=String(r["Cidade"]||r["cidade"]||"").trim();
+        const bairroRaw=String(r["Bairro"]||r["bairro"]||"").trim();
+        const mens=parseFloat(String(r["Mensalidade"]||r["mensalidade"]||"0").replace(",","."))||0;
+        if(!codigo||!nome)return null;
+        return{
+          codigo_cliente:codigo,
+          nome_cliente:nome,
+          filial:limparEmpresa(empresaRaw,cidadeRaw),
+          cidade:cidadeRaw,
+          bairro:bairroRaw,
+          mensalidade:mens,
+          tipo_pi:true,
+          status:"ativo"
+        };
+      }).filter(Boolean);
+      if(mapped.length===0){setErro('Nenhum cliente encontrado. Verifique as colunas: "Conta", "Fantasia", "Empresa".');return;}
+      setPreview(mapped);
+    },setErro);
+  }
+
+  function confirmar(){
+    if(!preview)return;
+    onImportClients(preview);
+    setPreview(null);setFileName("");
+    if(fileRef.current)fileRef.current.value="";
+    setMsg("✅ Clientes de PI enviados para importação!");
+    setTimeout(()=>setMsg(""),5000);
+  }
+
+  const piJaCadastrados=useMemo(()=>{
+    if(!preview)return 0;
+    const existentes=new Set(clients.map(c=>`${c.codigo_cliente}||${c.filial}`));
+    return preview.filter(c=>existentes.has(`${c.codigo_cliente}||${c.filial}`)).length;
+  },[preview,clients]);
+
+  return(
+    <div>
+      {msg&&<div style={{ marginBottom:12,padding:"8px 14px",borderRadius:8,background:"rgba(167,139,250,0.12)",border:"1px solid rgba(167,139,250,0.3)",color:"#a78bfa",fontSize:13,fontWeight:600 }}>{msg}</div>}
+      <DropZone color="#a78bfa" fileName={fileName} inputRef={fileRef} onChange={handleFile} label="Clique para selecionar a planilha de clientes de Portaria Inteligente" />
+      {erro&&<div style={{ marginTop:8,padding:"8px 14px",borderRadius:8,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",color:"#f87171",fontSize:12 }}>⚠️ {erro}</div>}
+      {preview&&(
+        <div style={{ marginTop:12 }}>
+          <div style={{ fontSize:12,color:"rgba(255,255,255,0.5)",marginBottom:8 }}>
+            ✅ <strong style={{ color:"#a78bfa" }}>{preview.length} clientes</strong> de PI encontrados
+            {piJaCadastrados>0&&<span style={{ marginLeft:8,color:"#fbbf24" }}>· {piJaCadastrados} já cadastrados (serão atualizados)</span>}
+            {piJaCadastrados<preview.length&&<span style={{ marginLeft:8,color:"#34d399" }}>· {preview.length-piJaCadastrados} novos</span>}
+          </div>
+          <div style={{ overflowX:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.07)",marginBottom:12 }}>
+            <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+              <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                {["Código","Nome","Filial","Cidade","Mensalidade"].map(h=>(
+                  <th key={h} style={{ padding:"8px 12px",textAlign:"left",color:"rgba(255,255,255,0.3)",fontSize:10,textTransform:"uppercase" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {preview.slice(0,5).map((r,i)=>(
+                  <tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding:"8px 12px",color:"#a78bfa",fontFamily:"monospace" }}>{r.codigo_cliente}</td>
+                    <td style={{ padding:"8px 12px",color:"#fff" }}>{r.nome_cliente}</td>
+                    <td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{r.filial}</td>
+                    <td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.4)" }}>{r.cidade||"—"}</td>
+                    <td style={{ padding:"8px 12px",color:"#34d399" }}>{r.mensalidade>0?formatCurrency(r.mensalidade):"—"}</td>
+                  </tr>
+                ))}
+                {preview.length>5&&<tr><td colSpan={5} style={{ padding:"8px 12px",color:"rgba(255,255,255,0.25)",textAlign:"center",fontSize:11 }}>+{preview.length-5} clientes adicionais</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display:"flex",gap:10 }}>
+            <button onClick={confirmar} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:"#a78bfa",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>
+              ✅ Importar {preview.length} clientes de PI
+            </button>
+            <button onClick={()=>{setPreview(null);setFileName("");if(fileRef.current)fileRef.current.value="";}} style={{ padding:"10px 16px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MensalidadesPadraoCard({ clients, supabaseClient, onRefresh }) {
   const [aplicando,setAplicando]=useState(false);const [msg,setMsg]=useState("");const [preview,setPreview]=useState(null);const [detalhes,setDetalhes]=useState("");
   const resumo=useMemo(()=>MENSALIDADES_PADRAO.map(({filialKey,valor})=>{const matchFn=c=>c.filial&&(c.filial.toUpperCase()===filialKey.toUpperCase()||c.filial.toUpperCase().includes(filialKey.toUpperCase().split(" ")[0]));const semMens=clients.filter(c=>matchFn(c)&&(!c.mensalidade||parseFloat(c.mensalidade)===0));const comMens=clients.filter(c=>matchFn(c)&&parseFloat(c.mensalidade)>0);return{filialKey,valor,semMens:semMens.length,comMens:comMens.length,clientes:semMens};}),[clients]);
@@ -2991,6 +3102,18 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         )}
       </div>
+      {/* ── Importação de Clientes Portaria Inteligente ── */}
+      <div style={{ borderRadius:16,border:"1px solid rgba(167,139,250,0.2)",background:"rgba(167,139,250,0.04)",padding:24,marginBottom:20 }}>
+        <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:16 }}>
+          <div style={{ width:40,height:40,borderRadius:10,background:"rgba(167,139,250,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18 }}>🏢</div>
+          <div>
+            <div style={{ fontSize:15,fontWeight:700,color:"#a78bfa" }}>Clientes — Portaria Inteligente</div>
+            <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginTop:2 }}>Importe a planilha de clientes de PI separadamente</div>
+          </div>
+        </div>
+        <PiClientImport onImportClients={onImportClients} clients={clients} supabaseClient={supabaseClient} />
+      </div>
+
       <MensalidadesPadraoCard clients={clients} supabaseClient={supabaseClient} onRefresh={onRefresh} />
 
       {/* ── Log de importações ── */}
@@ -3037,6 +3160,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   const [bairroFiltro,setBairroFiltro]=useState("Todos");
   const [areaFiltro,setAreaFiltro]=useState("Todas");
   const [statusFiltro,setStatusFiltro]=useState("Todos");const [mesFiltro,setMesFiltro]=useState("Todos");
+  const [tipoFiltro,setTipoFiltro]=useState("Todos"); // Todos | Normal | Portaria
   const [modalNovoCliente,setModalNovoCliente]=useState(false);const [editando,setEditando]=useState(null);const [salvando,setSalvando]=useState(false);const [msgSalvo,setMsgSalvo]=useState("");
   // -- UX: paginação e ordenação --
   const [pagina,setPagina]=useState(1);
@@ -3075,6 +3199,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   },[clients,filialFiltro,cidadeFiltro]);
   const mesesDisponiveis=useMemo(()=>{const s=new Set();for(const d of dispatches){const dt=parseDataHora(d.data_hora);if(dt)s.add(getMonthKey(dt));}return["Todos",...Array.from(s).filter(Boolean).sort().reverse()];},[dispatches]);
   const dispMap=useMemo(()=>{const m={};for(const d of dispatches.filter(x=>!x.portaria_inteligente)){if(mesFiltro!=="Todos"){const dt=parseDataHora(d.data_hora);if(!dt||getMonthKey(dt)!==mesFiltro)continue;}const k=`${d.codigo_cliente}||${d.filial}`;m[k]=(m[k]||0)+1;}return m;},[dispatches,mesFiltro]);
+  const piClienteKeys=useMemo(()=>{const s=new Set();for(const d of dispatches.filter(x=>x.portaria_inteligente))s.add(`${d.codigo_cliente}||${d.filial}`);return s;},[dispatches]);
   const filiais=useMemo(()=>{const s=new Set(clients.map(c=>c.filial).filter(Boolean));return["Todas",...Array.from(s).sort()];},[clients]);
 
   const filtrados=useMemo(()=>{
@@ -3086,6 +3211,9 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       if(areaFiltro!=="Todas"&&String(c.area||"").trim()!==areaFiltro)return false;
       if(statusFiltro==="Ativos"&&c.status!=="ativo")return false;
       if(statusFiltro==="Inativos"&&c.status!=="inativo")return false;
+      const isPiClient=piClienteKeys.has(`${c.codigo_cliente}||${c.filial}`);
+      if(tipoFiltro==="Portaria"&&!isPiClient)return false;
+      if(tipoFiltro==="Normal"&&isPiClient)return false;
       if(buscaDebounced){const nome=(c.nome_cliente||"").toLowerCase();const cod=String(c.codigo_cliente||"").replace(/^0+/,"");if(!nome.includes(buscaDebounced.toLowerCase())&&!cod.includes(buscaNorm))return false;}
       return true;
     });
@@ -3169,6 +3297,11 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
         {bairrosDisponiveis.length>0&&<select value={bairroFiltro} onChange={e=>setBairroFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:bairroFiltro!=="Todos"?"rgba(167,139,250,0.5)":"rgba(255,255,255,0.1)",color:bairroFiltro!=="Todos"?"#a78bfa":"#fff" }}>{bairrosDisponiveis.map(b=><option key={b} value={b}>{b==="Todos"?"📍 Todos os bairros":`📍 ${b}`}</option>)}</select>}
         {areasDisponiveis.length>0&&<select value={areaFiltro} onChange={e=>setAreaFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:areaFiltro!=="Todas"?"rgba(251,146,60,0.5)":"rgba(255,255,255,0.1)",color:areaFiltro!=="Todas"?"#fb923c":"#fff" }}><option value="Todas">🗂 Todas as áreas</option>{areasDisponiveis.map(a=><option key={a.area} value={a.area}>🗂 {a.label}</option>)}</select>}
         <select value={statusFiltro} onChange={e=>setStatusFiltro(e.target.value)} style={{ ...iStyle,width:"auto" }}>{["Todos","Ativos","Inativos"].map(s=><option key={s} value={s}>{s}</option>)}</select>
+        <select value={tipoFiltro} onChange={e=>setTipoFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:tipoFiltro!=="Todos"?"rgba(167,139,250,0.5)":"rgba(255,255,255,0.1)",color:tipoFiltro!=="Todos"?"#a78bfa":"#fff" }}>
+          <option value="Todos">🔀 Todos os tipos</option>
+          <option value="Normal">🚗 Deslocamento Normal</option>
+          <option value="Portaria">🏢 Portaria Inteligente</option>
+        </select>
         <select value={mesFiltro} onChange={e=>setMesFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:mesFiltro!=="Todos"?"rgba(251,146,60,0.5)":"rgba(255,255,255,0.1)",color:mesFiltro!=="Todos"?"#fb923c":"#fff" }}>{mesesDisponiveis.map(m=><option key={m} value={m}>{m==="Todos"?"📅 Todos os meses":`📅 ${monthLabel(m)}`}</option>)}</select>
       </div>
       <Card style={{ overflow:"hidden" }}>
