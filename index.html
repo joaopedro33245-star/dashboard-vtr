@@ -186,8 +186,7 @@ function limparEmpresa(raw, cidade) {
   if (s.includes("MARANHÃO") || s.includes("MARANHAO")) return "SERVIS MARANHÃO";
   if (s.includes("PIAUÍ") || s.includes("PIAUI") || s.includes("SECOPI")) {
     const c = String(cidade || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    if (c.includes("TERESINA") || c.includes("ALTOS") || c.includes("DEMERVAL") || c.includes("BENEDITINOS")) return "SECOPI TERESINA";
-    return "SECOPI";
+    return "SECOPI PIAUÍ";
   }
   if (s.includes("P3") || s.includes("SOLUC")) return "1 P3 SOLUCOES";
   if (s.includes("PROGUARD")) return "2 PROGUARD";
@@ -2997,7 +2996,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
         else if(typeof dataRaw==="number"&&dataRaw>1000){const excelEpoch=new Date(1899,11,30);const d=new Date(excelEpoch.getTime()+dataRaw*86400000);data_hora=d.toLocaleString("pt-BR");}
         else{data_hora=String(dataRaw).trim();}
         let filial=limparEmpresa(empresaRaw,cidadeRaw);
-        if(!cidadeRaw&&(filial==="SECOPI TERESINA"||filial==="SECOPI")){
+        if(!cidadeRaw&&(filial==="SECOPI PIAUÍ"||filial==="SECOPI")){
           const clienteCadastrado=clients.find(c=>c.codigo_cliente===codigo);
           if(clienteCadastrado&&clienteCadastrado.filial)filial=clienteCadastrado.filial;
         }
@@ -3092,7 +3091,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           <select value={filialForcada} onChange={e=>{setFilialForcada(e.target.value);setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}} style={{ width:"100%",padding:"10px 14px",borderRadius:10,border:filialForcada?"1px solid rgba(129,140,248,0.5)":"1px solid rgba(239,68,68,0.5)",background:filialForcada?"rgba(129,140,248,0.08)":"rgba(239,68,68,0.06)",color:filialForcada?"#818cf8":"#f87171",fontSize:13,fontWeight:700,outline:"none",cursor:"pointer" }}>
             <option value="">— Selecione a filial antes de importar —</option>
             <option value="SERVIS CEARÁ">SERVIS CEARÁ</option><option value="SERVIS AMAZONAS">SERVIS AMAZONAS</option><option value="SERVIS MARANHÃO">SERVIS MARANHÃO</option>
-            <option value="SECOPI TERESINA">SECOPI TERESINA</option>
+            
             <option value="1 P3 SOLUCOES">P3 SOLUÇÕES</option><option value="2 PROGUARD">PROGUARD</option><option value="Maver Monitoramento">MAVER MONITORAMENTO</option>
             <option value="SIDERALTECH">SIDERALTECH</option><option value="VISION SEGURANCA">VISION SEGURANÇA</option><option value="OVERTEC">OVERTEC</option>
             <option value="3 LUXUS SERVICOS E TECNOLOGIA LTDA">LUXUS</option><option value="4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA">PRIORIDADE</option><option value="PERES MONITORAMENTO">PERES MONITORAMENTO</option>
