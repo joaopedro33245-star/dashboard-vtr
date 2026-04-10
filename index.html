@@ -744,11 +744,15 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
   const [periodoB, setPeriodoB] = useState("");
   const [clienteModal, setClienteModal] = useState(null);
 
-  // Mapa de nomes reais dos clientes (objeto simples, não useMemo)
+  // Mapa de nomes reais — chave: codigo||filial para evitar colisão entre filiais
   const nomeMapComp={};
   for(const cl of clients){
     const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
-    if(n)nomeMapComp[cl.codigo_cliente]=n;
+    if(n){
+      nomeMapComp[`${cl.codigo_cliente}||${cl.filial}`]=n;
+      // Fallback por código (usado quando filial não bate exatamente)
+      if(!nomeMapComp[cl.codigo_cliente])nomeMapComp[cl.codigo_cliente]=n;
+    }
   }
 
   const periodos = useMemo(()=>{
@@ -774,7 +778,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipo==="normal"&&d.portaria_inteligente)continue;
       if(tipo==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      const nome=nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      const nome=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
       if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nome,filial:d.filial,total:0};
       clienteMap[key].total++;
     }
@@ -800,7 +804,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipoVisao==="normal"&&d.portaria_inteligente)continue;
       if(tipoVisao==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      const nomeEvol=nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      const nomeEvol=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
       if(!clienteMap[key])clienteMap[key]={codigo:d.codigo_cliente,nome:nomeEvol,filial:d.filial,periodos:{}};
       const dt=parseDataHora(d.data_hora);
       if(!dt)continue;
@@ -1640,16 +1644,17 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
     if(piDispatches.length===0)return{ranking:[],porFilial:[],eventos:[],filiais:["Todas"],totalEventos:0};
     const clienteMap={},filialMap={},eventoMap={},mensMap={},nomeMap={};
     // Monta mapa de nome e mensalidade a partir da tabela clients
+    // Chave: codigo_cliente||filial para evitar colisão entre filiais
     for(const c of clients){
-      mensMap[`${c.codigo_cliente}||${c.filial}`]=parseFloat(c.mensalidade)||0;
-      // guarda o melhor nome disponível — sem "(PORTARIA INTELIGENTE)" se tiver outro
+      const chave=`${c.codigo_cliente}||${c.filial}`;
+      mensMap[chave]=parseFloat(c.mensalidade)||0;
       const nomeClean=(c.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
-      if(nomeClean)nomeMap[c.codigo_cliente]=nomeClean;
+      if(nomeClean)nomeMap[chave]=nomeClean;
     }
     for(const d of piDispatches){
       const key=`${d.codigo_cliente}||${d.filial}`;
-      // Prioridade: nome da tabela clients > nome do dispatch > código
-      const nome=nomeMap[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      // Usa nome da mesma filial do dispatch
+      const nome=nomeMap[key]||d.nome_cliente||d.codigo_cliente;
       if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nome,filial:d.filial,total_eventos:0};
       clienteMap[key].total_eventos++;
       if(d.filial)filialMap[d.filial]=(filialMap[d.filial]||0)+1;
@@ -2405,7 +2410,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
     const normalDispatches=dispatchesMes.filter(d=>!d.portaria_inteligente);
     const dispMap={},filialMap={},eventoMap={};
     for(const d of normalDispatches){const key=`${d.codigo_cliente}||${d.filial}`;dispMap[key]=(dispMap[key]||0)+1;if(d.filial)filialMap[d.filial]=(filialMap[d.filial]||0)+1;if(d.evento)eventoMap[d.evento]=(eventoMap[d.evento]||0)+1;}
-    const nomeMapDash={};for(const cl of clients){const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim();if(n)nomeMapDash[cl.codigo_cliente]=n;} const baseClients=clients.length>0?clients.map(c=>({...c,nome_cliente:nomeMapDash[c.codigo_cliente]||c.nome_cliente})):Object.entries(dispMap).map(([key])=>{const[codigo_cliente,filial]=key.split("||");return{codigo_cliente,filial,nome_cliente:codigo_cliente,mensalidade:0,status:"ativo"};});
+    const nomeMapDash={};for(const cl of clients){const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim();if(n){nomeMapDash[`${cl.codigo_cliente}||${cl.filial}`]=n;}} const baseClients=clients.length>0?clients.map(c=>({...c,nome_cliente:nomeMapDash[`${c.codigo_cliente}||${c.filial}`]||c.nome_cliente})):Object.entries(dispMap).map(([key])=>{const[codigo_cliente,filial]=key.split("||");return{codigo_cliente,filial,nome_cliente:codigo_cliente,mensalidade:0,status:"ativo"};});
     const rankingAll=baseClients.map(c=>{const key=`${c.codigo_cliente}||${c.filial}`;const totalDesl=dispMap[key]||0;const custoUnit=c.custo_individual||CUSTO_FISCAL;const custo=totalDesl*custoUnit;const mens=c.mensalidade||0;return{...c,total_deslocamentos:totalDesl,custo_operacional:custo,lucro_real:mens-custo,custo_individual:custoUnit,status_financeiro:calcStatus(mens,custo)};}).sort((a,b)=>b.total_deslocamentos-a.total_deslocamentos);
     const totalDesl=rankingAll.reduce((s,r)=>s+r.total_deslocamentos,0);
     const filiaisSet=["Todas",...new Set([...baseClients.map(c=>c.filial),...normalDispatches.map(d=>d.filial)].filter(Boolean))];
