@@ -741,7 +741,7 @@ function FilialChart({ periodoA, periodoB, labelA, labelB, dispatchesFiltrados, 
   return<div style={{position:"relative",height:220}}><canvas ref={ref}/></div>;
 }
 
-function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, periodoTipo }) {
+function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, periodoTipo, clients=[] }) {
   const isWeek = periodoTipo==="semana";
   const [periodoA, setPeriodoA] = useState("");
   const [periodoB, setPeriodoB] = useState("");
@@ -795,7 +795,8 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipoVisao==="normal"&&d.portaria_inteligente)continue;
       if(tipoVisao==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      if(!clienteMap[key])clienteMap[key]={codigo:d.codigo_cliente,nome:d.nome_cliente||d.codigo_cliente,filial:d.filial,periodos:{}};
+      const nomeEvol=nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      if(!clienteMap[key])clienteMap[key]={codigo:d.codigo_cliente,nome:nomeEvol,filial:d.filial,periodos:{}};
       const dt=parseDataHora(d.data_hora);
       if(!dt)continue;
       const pk=keyFn(dt);
@@ -959,11 +960,11 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
   );
 }
 
-function ComparativosSemanas({ dispatches, filiais, dispatchesFiltrados, tipoVisao }) {
-  return <ComparativosPeriodo dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} periodoTipo="semana" />;
+function ComparativosSemanas({ dispatches, filiais, dispatchesFiltrados, tipoVisao, clients }) {
+  return <ComparativosPeriodo dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} periodoTipo="semana" clients={clients} />;
 }
-function ComparativosMeses({ dispatches, dispatchesFiltrados, tipoVisao }) {
-  return <ComparativosPeriodo dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} periodoTipo="mes" />;
+function ComparativosMeses({ dispatches, dispatchesFiltrados, tipoVisao, clients }) {
+  return <ComparativosPeriodo dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} periodoTipo="mes" clients={clients} />;
 }
 
 function EvolucaoTable({ data, labelFn, periodLabel, accentColor, tipoVisao }) {
@@ -1599,8 +1600,8 @@ function ComparativosTab({ dispatches, clients }) {
         <button onClick={()=>setSubAba("semanas")} style={{ padding:"8px 20px",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",border:subAba==="semanas"?"1px solid #38bdf8":"1px solid rgba(255,255,255,0.08)",background:subAba==="semanas"?"rgba(56,189,248,0.12)":"rgba(255,255,255,0.03)",color:subAba==="semanas"?"#38bdf8":"rgba(255,255,255,0.4)",transition:"all 0.15s" }}>🗓 Semanas</button>
         <button onClick={()=>setSubAba("meses")} style={{ padding:"8px 20px",borderRadius:10,fontSize:13,fontWeight:600,cursor:"pointer",border:subAba==="meses"?"1px solid #fb923c":"1px solid rgba(255,255,255,0.08)",background:subAba==="meses"?"rgba(251,146,60,0.12)":"rgba(255,255,255,0.03)",color:subAba==="meses"?"#fb923c":"rgba(255,255,255,0.4)",transition:"all 0.15s" }}>📆 Meses</button>
       </div>
-      {subAba==="semanas"&&<ComparativosSemanas dispatches={dispatches} filiais={filiais} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} />}
-      {subAba==="meses"&&<ComparativosMeses dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} />}
+      {subAba==="semanas"&&<ComparativosSemanas dispatches={dispatches} filiais={filiais} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} clients={clients} />}
+      {subAba==="meses"&&<ComparativosMeses dispatches={dispatches} dispatchesFiltrados={dispatchesFiltrados} tipoVisao={tipoVisao} clients={clients} />}
     </div>
   );
 }
@@ -1632,11 +1633,19 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
   const { ranking,porFilial,eventos,filiais,totalEventos }=useMemo(()=>{
     const piDispatches=dispatchesMes.filter(d=>d.portaria_inteligente);
     if(piDispatches.length===0)return{ranking:[],porFilial:[],eventos:[],filiais:["Todas"],totalEventos:0};
-    const clienteMap={},filialMap={},eventoMap={},mensMap={};
-    for(const c of clients)mensMap[`${c.codigo_cliente}||${c.filial}`]=parseFloat(c.mensalidade)||0;
+    const clienteMap={},filialMap={},eventoMap={},mensMap={},nomeMap={};
+    // Monta mapa de nome e mensalidade a partir da tabela clients
+    for(const c of clients){
+      mensMap[`${c.codigo_cliente}||${c.filial}`]=parseFloat(c.mensalidade)||0;
+      // guarda o melhor nome disponível — sem "(PORTARIA INTELIGENTE)" se tiver outro
+      const nomeClean=(c.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
+      if(nomeClean)nomeMap[c.codigo_cliente]=nomeClean;
+    }
     for(const d of piDispatches){
       const key=`${d.codigo_cliente}||${d.filial}`;
-      if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:d.nome_cliente||d.codigo_cliente,filial:d.filial,total_eventos:0};
+      // Prioridade: nome da tabela clients > nome do dispatch > código
+      const nome=nomeMap[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nome,filial:d.filial,total_eventos:0};
       clienteMap[key].total_eventos++;
       if(d.filial)filialMap[d.filial]=(filialMap[d.filial]||0)+1;
       if(d.evento)eventoMap[d.evento]=(eventoMap[d.evento]||0)+1;
@@ -1681,12 +1690,23 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
     }).sort((a,b)=>b.pct-a.pct).slice(0,5);
   },[ranking,dispatches,filialFiltro]);
 
-  const rankingFiltrado=useMemo(()=>{const base=filialFiltro==="Todas"?ranking:ranking.filter(r=>r.filial===filialFiltro);return base.slice(0,10);},[ranking,filialFiltro]);
+  const [paginaPI,setPaginaPI]=useState(1);
+  const PER_PAGE_PI=15;
+  const rankingBase=useMemo(()=>filialFiltro==="Todas"?ranking:ranking.filter(r=>r.filial===filialFiltro),[ranking,filialFiltro]);
+  useEffect(()=>setPaginaPI(1),[filialFiltro,mesFiltroEfetivo]);
+  const rankingFiltrado=useMemo(()=>rankingBase.slice((paginaPI-1)*PER_PAGE_PI,paginaPI*PER_PAGE_PI),[rankingBase,paginaPI]);
   if(totalEventos===0&&mesFiltroEfetivo==="Todos")return <EmptyState icon="🏢" title="Nenhum evento de Portaria Inteligente" sub="Os eventos de Portaria Inteligente são detectados automaticamente na importação da planilha de deslocamentos." />;
 
   return (
     <>
-      <MesFiltroBar value={mesFiltroEfetivo} onChange={setMesFiltro} meses={mesesDisponiveis} accent="#a78bfa" />
+      <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap" }}>
+        <div style={{ flex:1 }}>
+          <MesFiltroBar value={mesFiltroEfetivo} onChange={setMesFiltro} meses={mesesDisponiveis} accent="#a78bfa" />
+        </div>
+        <select value={filialFiltro} onChange={e=>setFilialFiltro(e.target.value)} style={{ padding:"8px 14px",borderRadius:10,border:filialFiltro!=="Todas"?"1px solid rgba(167,139,250,0.5)":"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.06)",color:filialFiltro!=="Todas"?"#a78bfa":"#fff",fontSize:13,outline:"none",cursor:"pointer",flexShrink:0 }}>
+          {filiais.map(f=><option key={f} value={f}>{f}</option>)}
+        </select>
+      </div>
 
       {totalEventos===0&&mesFiltroEfetivo!=="Todos"?(
         <EmptyState icon="🏢" title={`Nenhum evento de PI em ${monthLabel(mesFiltroEfetivo)}`} sub="Tente selecionar outro mês ou 'Todos os meses'." />
@@ -1838,7 +1858,7 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
       {/* ── Ranking ── */}
       <Card>
         <div style={{ borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12 }}>
-          <div><SectionLabel>Top 10 — Portaria Inteligente</SectionLabel><p style={{ fontSize:11,color:"rgba(255,255,255,0.25)",margin:"-8px 0 0" }}>Ordenado por quantidade de eventos</p></div>
+          <div><SectionLabel>Ranking — Portaria Inteligente</SectionLabel><p style={{ fontSize:11,color:"rgba(255,255,255,0.25)",margin:"-8px 0 0" }}>Ordenado por quantidade de eventos · {rankingBase.length} clientes</p></div>
           <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>{filiais.map(f=><FilterBtn key={f} active={filialFiltro===f} onClick={()=>setFilialFiltro(f)}>{f}</FilterBtn>)}</div>
         </div>
         <div style={{ overflowX:"auto" }}>
@@ -1885,6 +1905,7 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
           </table>
         </div>
       </Card>
+      <Pagination total={rankingBase.length} page={paginaPI} perPage={PER_PAGE_PI} onChange={setPaginaPI} />
       </>)}
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} isPortaria={true} />}
     </>
@@ -2379,7 +2400,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
     const normalDispatches=dispatchesMes.filter(d=>!d.portaria_inteligente);
     const dispMap={},filialMap={},eventoMap={};
     for(const d of normalDispatches){const key=`${d.codigo_cliente}||${d.filial}`;dispMap[key]=(dispMap[key]||0)+1;if(d.filial)filialMap[d.filial]=(filialMap[d.filial]||0)+1;if(d.evento)eventoMap[d.evento]=(eventoMap[d.evento]||0)+1;}
-    const baseClients=clients.length>0?clients:Object.entries(dispMap).map(([key])=>{const[codigo_cliente,filial]=key.split("||");return{codigo_cliente,filial,nome_cliente:codigo_cliente,mensalidade:0,status:"ativo"};});
+    const nomeMapDash={};for(const cl of clients){const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim();if(n)nomeMapDash[cl.codigo_cliente]=n;} const baseClients=clients.length>0?clients.map(c=>({...c,nome_cliente:nomeMapDash[c.codigo_cliente]||c.nome_cliente})):Object.entries(dispMap).map(([key])=>{const[codigo_cliente,filial]=key.split("||");return{codigo_cliente,filial,nome_cliente:codigo_cliente,mensalidade:0,status:"ativo"};});
     const rankingAll=baseClients.map(c=>{const key=`${c.codigo_cliente}||${c.filial}`;const totalDesl=dispMap[key]||0;const custoUnit=c.custo_individual||CUSTO_FISCAL;const custo=totalDesl*custoUnit;const mens=c.mensalidade||0;return{...c,total_deslocamentos:totalDesl,custo_operacional:custo,lucro_real:mens-custo,custo_individual:custoUnit,status_financeiro:calcStatus(mens,custo)};}).sort((a,b)=>b.total_deslocamentos-a.total_deslocamentos);
     const totalDesl=rankingAll.reduce((s,r)=>s+r.total_deslocamentos,0);
     const filiaisSet=["Todas",...new Set([...baseClients.map(c=>c.filial),...normalDispatches.map(d=>d.filial)].filter(Boolean))];
@@ -3199,7 +3220,26 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   },[clients,filialFiltro,cidadeFiltro]);
   const mesesDisponiveis=useMemo(()=>{const s=new Set();for(const d of dispatches){const dt=parseDataHora(d.data_hora);if(dt)s.add(getMonthKey(dt));}return["Todos",...Array.from(s).filter(Boolean).sort().reverse()];},[dispatches]);
   const dispMap=useMemo(()=>{const m={};for(const d of dispatches.filter(x=>!x.portaria_inteligente)){if(mesFiltro!=="Todos"){const dt=parseDataHora(d.data_hora);if(!dt||getMonthKey(dt)!==mesFiltro)continue;}const k=`${d.codigo_cliente}||${d.filial}`;m[k]=(m[k]||0)+1;}return m;},[dispatches,mesFiltro]);
-  const piClienteKeys=useMemo(()=>{const s=new Set();for(const d of dispatches.filter(x=>x.portaria_inteligente))s.add(`${d.codigo_cliente}||${d.filial}`);return s;},[dispatches]);
+  const piClienteKeys=useMemo(()=>{
+    const s=new Set();
+    // 1. Pelo nome do cliente
+    for(const c of clients)
+      if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))
+        s.add(`${c.codigo_cliente}||${c.filial}`);
+    // 2. Pelo código que aparece em deslocamentos PI
+    const codigosPI=new Set(dispatches.filter(x=>x.portaria_inteligente).map(d=>String(d.codigo_cliente)));
+    for(const c of clients)
+      if(codigosPI.has(String(c.codigo_cliente)))
+        s.add(`${c.codigo_cliente}||${c.filial}`);
+    return s;
+  },[dispatches,clients]);
+
+  // Filtra direto pelo nome também para garantir
+  const isPI=(c)=>{
+    if(piClienteKeys.has(`${c.codigo_cliente}||${c.filial}`))return true;
+    if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))return true;
+    return false;
+  };
   const filiais=useMemo(()=>{const s=new Set(clients.map(c=>c.filial).filter(Boolean));return["Todas",...Array.from(s).sort()];},[clients]);
 
   const filtrados=useMemo(()=>{
@@ -3211,7 +3251,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       if(areaFiltro!=="Todas"&&String(c.area||"").trim()!==areaFiltro)return false;
       if(statusFiltro==="Ativos"&&c.status!=="ativo")return false;
       if(statusFiltro==="Inativos"&&c.status!=="inativo")return false;
-      const isPiClient=piClienteKeys.has(`${c.codigo_cliente}||${c.filial}`);
+      const isPiClient=isPI(c);
       if(tipoFiltro==="Portaria"&&!isPiClient)return false;
       if(tipoFiltro==="Normal"&&isPiClient)return false;
       if(buscaDebounced){const nome=(c.nome_cliente||"").toLowerCase();const cod=String(c.codigo_cliente||"").replace(/^0+/,"");if(!nome.includes(buscaDebounced.toLowerCase())&&!cod.includes(buscaNorm))return false;}
@@ -3306,9 +3346,9 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
         {areasDisponiveis.length>0&&<select value={areaFiltro} onChange={e=>setAreaFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:areaFiltro!=="Todas"?"rgba(251,146,60,0.5)":"rgba(255,255,255,0.1)",color:areaFiltro!=="Todas"?"#fb923c":"#fff" }}><option value="Todas">🗂 Todas as áreas</option>{areasDisponiveis.map(a=><option key={a.area} value={a.area}>🗂 {a.label}</option>)}</select>}
         <select value={statusFiltro} onChange={e=>setStatusFiltro(e.target.value)} style={{ ...iStyle,width:"auto" }}>{["Todos","Ativos","Inativos"].map(s=><option key={s} value={s}>{s}</option>)}</select>
         <select value={tipoFiltro} onChange={e=>setTipoFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:tipoFiltro!=="Todos"?"rgba(167,139,250,0.5)":"rgba(255,255,255,0.1)",color:tipoFiltro!=="Todos"?"#a78bfa":"#fff" }}>
-          <option value="Todos">🔀 Todos os tipos</option>
-          <option value="Normal">🚗 Deslocamento Normal</option>
-          <option value="Portaria">🏢 Portaria Inteligente</option>
+          <option value="Todos">🔀 Normal + Portaria</option>
+          <option value="Normal">🚗 Somente Normal</option>
+          <option value="Portaria">🏢 Somente Portaria Int.</option>
         </select>
         <select value={mesFiltro} onChange={e=>setMesFiltro(e.target.value)} style={{ ...iStyle,width:"auto",borderColor:mesFiltro!=="Todos"?"rgba(251,146,60,0.5)":"rgba(255,255,255,0.1)",color:mesFiltro!=="Todos"?"#fb923c":"#fff" }}>{mesesDisponiveis.map(m=><option key={m} value={m}>{m==="Todos"?"📅 Todos os meses":`📅 ${monthLabel(m)}`}</option>)}</select>
       </div>
@@ -3994,7 +4034,7 @@ function App() {
       })).filter(d=>d.codigo_cliente&&d.filial);
       const clientesExistentes=new Set(clients.map(c=>`${c.codigo_cliente}||${c.filial}`));
       const novosClientesMap={};
-      for(const d of sanitized){if(!d.portaria_inteligente&&d.codigo_cliente&&d.filial){const key=`${d.codigo_cliente}||${d.filial}`;if(!clientesExistentes.has(key)&&!novosClientesMap[key])novosClientesMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:d.nome_cliente||d.codigo_cliente,filial:d.filial,mensalidade:0,status:"ativo"};}}
+      for(const d of sanitized){if(!d.portaria_inteligente&&d.codigo_cliente&&d.filial){const key=`${d.codigo_cliente}||${d.filial}`;if(!clientesExistentes.has(key)&&!novosClientesMap[key]){const nomeFallback=(d.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim()||d.codigo_cliente;novosClientesMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nomeFallback,filial:d.filial,mensalidade:0,status:"ativo"};}}}
       const novosClientes=Object.values(novosClientesMap);
       if(novosClientes.length>0){for(let i=0;i<novosClientes.length;i+=500)await supabaseClient.from("clients").upsert(novosClientes.slice(i,i+500),{onConflict:"codigo_cliente,filial"});}
       const existentesSet=new Set();let fromDesl=0;
@@ -4007,7 +4047,7 @@ function App() {
       const msgNovos=novosClientes.length>0?` · ${novosClientes.length} clientes novos`:"";
       const msgDup=duplicados>0?` · ${duplicados} duplicados ignorados`:"";
       setImportMsg("✅ "+totalInserido+" deslocamentos adicionados!"+msgNovos+msgDup);
-      try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("deslocamentos",sanitizedD.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);setAba("dashboard");
+      try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("deslocamentos",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);setAba("dashboard");
     }catch(e){setImportMsg("❌ Erro ao importar: "+e.message);setLoadingData(false);}
   }
 
