@@ -186,8 +186,6 @@ function limparEmpresa(raw, cidade) {
   if (s.includes("MARANHÃO") || s.includes("MARANHAO")) return "SERVIS MARANHÃO";
   if (s.includes("PIAUÍ") || s.includes("PIAUI") || s.includes("SECOPI")) {
     const c = String(cidade || "").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    if (c.includes("PICOS") || c.includes("FLORIANO") || c.includes("VALENCA")) return "SECOPI PICOS";
-    if (c.includes("PARNAI") || c.includes("LUIS CORREIA") || c.includes("CORREIA")) return "SECOPI PARNAÍBA";
     if (c.includes("TERESINA") || c.includes("ALTOS") || c.includes("DEMERVAL") || c.includes("BENEDITINOS")) return "SECOPI TERESINA";
     return "SECOPI";
   }
@@ -3094,7 +3092,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           <select value={filialForcada} onChange={e=>{setFilialForcada(e.target.value);setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}} style={{ width:"100%",padding:"10px 14px",borderRadius:10,border:filialForcada?"1px solid rgba(129,140,248,0.5)":"1px solid rgba(239,68,68,0.5)",background:filialForcada?"rgba(129,140,248,0.08)":"rgba(239,68,68,0.06)",color:filialForcada?"#818cf8":"#f87171",fontSize:13,fontWeight:700,outline:"none",cursor:"pointer" }}>
             <option value="">— Selecione a filial antes de importar —</option>
             <option value="SERVIS CEARÁ">SERVIS CEARÁ</option><option value="SERVIS AMAZONAS">SERVIS AMAZONAS</option><option value="SERVIS MARANHÃO">SERVIS MARANHÃO</option>
-            <option value="SECOPI TERESINA">SECOPI TERESINA</option><option value="SECOPI PICOS">SECOPI PICOS</option><option value="SECOPI PARNAÍBA">SECOPI PARNAÍBA</option>
+            <option value="SECOPI TERESINA">SECOPI TERESINA</option>
             <option value="1 P3 SOLUCOES">P3 SOLUÇÕES</option><option value="2 PROGUARD">PROGUARD</option><option value="Maver Monitoramento">MAVER MONITORAMENTO</option>
             <option value="SIDERALTECH">SIDERALTECH</option><option value="VISION SEGURANCA">VISION SEGURANÇA</option><option value="OVERTEC">OVERTEC</option>
             <option value="3 LUXUS SERVICOS E TECNOLOGIA LTDA">LUXUS</option><option value="4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA">PRIORIDADE</option><option value="PERES MONITORAMENTO">PERES MONITORAMENTO</option>
@@ -3188,7 +3186,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   const [sortBy,setSortBy]=useState("nome_cliente");
   const [sortDir,setSortDir]=useState("asc");
   const PER_PAGE=20;
-  const FILIAIS=["SERVIS CEARÁ","SERVIS AMAZONAS","SERVIS MARANHÃO","SECOPI PIAUÍ","SECOPI PICOS","SECOPI PARNAÍBA","1 P3 SOLUCOES","2 PROGUARD","Maver Monitoramento","SIDERALTECH","VISION SEGURANCA","OVERTEC","3 LUXUS SERVICOS E TECNOLOGIA LTDA","4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA","PERES MONITORAMENTO"];
+  const FILIAIS=["SERVIS CEARÁ","SERVIS AMAZONAS","SERVIS MARANHÃO","SECOPI PIAUÍ","1 P3 SOLUCOES","2 PROGUARD","Maver Monitoramento","SIDERALTECH","VISION SEGURANCA","OVERTEC","3 LUXUS SERVICOS E TECNOLOGIA LTDA","4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA","PERES MONITORAMENTO"];
 
   useEffect(()=>{const t=setTimeout(()=>setBuscaDebounced(busca),250);return()=>clearTimeout(t);},[busca]);
   useEffect(()=>{setCidadeFiltro("Todas");setPagina(1);},[filialFiltro]);
@@ -3289,28 +3287,41 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
     const custoVal=parseFloat(dados.custo_individual)||null;
     const metaVal=parseInt(dados.meta_desl)||0;
-    console.log("Editando cliente:", editando.codigo_cliente, editando.filial);
-    console.log("Dados a salvar:", {nome_cliente:dados.nome,mensalidade:mensVal,bairro:dados.bairro,area:dados.area,custo_individual:custoVal,meta_desl:metaVal});
-    const{data:updateData,error}=await supabaseClient.from("clients")
-      .update({
-        nome_cliente:dados.nome,
-        mensalidade:mensVal,
-        bairro:sanitizeStr(dados.bairro||"",100),
-        area:sanitizeStr(dados.area||"",10),
-        custo_individual:custoVal,
-        meta_desl:metaVal
-      })
-      .eq("codigo_cliente",editando.codigo_cliente)
-      .eq("filial",editando.filial)
-      .select();
-    console.log("Resultado update:", updateData, error);
+    const payload={
+      nome_cliente:dados.nome,
+      mensalidade:mensVal,
+      bairro:sanitizeStr(dados.bairro||"",100),
+      area:sanitizeStr(dados.area||"",10),
+      custo_individual:custoVal,
+      meta_desl:metaVal
+    };
+    // Usa id quando disponível (evita problema de filial normalizada vs banco)
+    let query=supabaseClient.from("clients").update(payload);
+    if(editando.id){
+      query=query.eq("id",editando.id);
+    } else {
+      query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial);
+    }
+    const{data:updateData,error}=await query.select();
     setSalvando(false);
     if(!error){
       if(!updateData||updateData.length===0){
-        setMsgSalvo("⚠️ Nenhum registro atualizado — verifique código e filial");
+        // Tenta buscar o id real e atualizar
+        const{data:found}=await supabaseClient.from("clients")
+          .select("id").eq("codigo_cliente",editando.codigo_cliente).limit(10);
+        if(found&&found.length>0){
+          const ids=found.map(r=>r.id);
+          await supabaseClient.from("clients").update(payload).in("id",ids);
+          setEditando(null);
+          setMsgSalvo("✅ Cliente atualizado!");
+          setTimeout(()=>setMsgSalvo(""),4000);
+          onRefresh();
+        } else {
+          setMsgSalvo("⚠️ Nenhum registro encontrado para código "+editando.codigo_cliente);
+        }
       } else {
         setEditando(null);
-        setMsgSalvo("✅ Cliente atualizado! ("+updateData.length+" registro)");
+        setMsgSalvo("✅ Cliente atualizado!");
         setTimeout(()=>setMsgSalvo(""),4000);
         onRefresh();
       }
@@ -3427,6 +3438,12 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
 function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvando, bloqueaCodigo, bloqueaFilial }) {
   const [codigo,setCodigo]=useState(inicial?.codigo_cliente||"");
   const [nome,setNome]=useState(inicial?.nome_cliente||"");
+  // Garante que a filial do cliente sempre está disponível na lista
+  const filiaisComAtual=useMemo(()=>{
+    if(!inicial?.filial)return filiais;
+    if(filiais.includes(inicial.filial))return filiais;
+    return[...filiais,inicial.filial];
+  },[filiais,inicial?.filial]);
   const [filial,setFilial]=useState(inicial?.filial||filiais[0]);
   const [mens,setMens]=useState(inicial?.mensalidade||"");
   const [bairro,setBairro]=useState(inicial?.bairro||"");
@@ -3447,7 +3464,7 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
         <div style={{ display:"flex",flexDirection:"column",gap:14 }}>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>CÓDIGO</label><input value={codigo} onChange={e=>setCodigo(e.target.value)} disabled={bloqueaCodigo} style={{ ...iStyle,opacity:bloqueaCodigo?0.5:1 }} placeholder="Ex: 12345" /></div>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>NOME DO CLIENTE</label><input value={nome} onChange={e=>setNome(e.target.value)} style={iStyle} placeholder="Ex: Condomínio Exemplo" /></div>
-          <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiais.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
+          <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiaisComAtual.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
             <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>BAIRRO</label><input value={bairro} onChange={e=>setBairro(e.target.value)} style={iStyle} placeholder="Ex: Centro" /></div>
           </div>
