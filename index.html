@@ -744,15 +744,12 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
   const [periodoB, setPeriodoB] = useState("");
   const [clienteModal, setClienteModal] = useState(null);
 
-  // Mapa de nomes reais dos clientes
-  const nomeMapComp=useMemo(()=>{
-    const m={};
-    for(const cl of clients){
-      const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
-      if(n)m[cl.codigo_cliente]=n;
-    }
-    return m;
-  },[clients]);
+  // Mapa de nomes reais dos clientes (objeto simples, não useMemo)
+  const nomeMapComp={};
+  for(const cl of clients){
+    const n=(cl.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").replace(/PORTARIA INTELIGENTE\s*[-–]?\s*/i,"").trim();
+    if(n)nomeMapComp[cl.codigo_cliente]=n;
+  }
 
   const periodos = useMemo(()=>{
     const s=new Set();
