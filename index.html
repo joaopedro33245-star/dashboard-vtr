@@ -1,4 +1,5 @@
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -751,7 +752,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
     if(n){
       nomeMapComp[`${cl.codigo_cliente}||${cl.filial}`]=n;
       // Fallback por código (usado quando filial não bate exatamente)
-      if(!nomeMapComp[cl.codigo_cliente])nomeMapComp[cl.codigo_cliente]=n;
+      // fallback por código removido — causava contaminação entre filiais com mesmo código
     }
   }
 
@@ -778,7 +779,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipo==="normal"&&d.portaria_inteligente)continue;
       if(tipo==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      const nome=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      const nome=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||d.nome_cliente||d.codigo_cliente;
       if(!clienteMap[key])clienteMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nome,filial:d.filial,total:0};
       clienteMap[key].total++;
     }
@@ -804,7 +805,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
       if(tipoVisao==="normal"&&d.portaria_inteligente)continue;
       if(tipoVisao==="pi"&&!d.portaria_inteligente)continue;
       const key=`${d.codigo_cliente}||${d.filial}`;
-      const nomeEvol=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||nomeMapComp[d.codigo_cliente]||d.nome_cliente||d.codigo_cliente;
+      const nomeEvol=nomeMapComp[`${d.codigo_cliente}||${d.filial}`]||d.nome_cliente||d.codigo_cliente;
       if(!clienteMap[key])clienteMap[key]={codigo:d.codigo_cliente,nome:nomeEvol,filial:d.filial,periodos:{}};
       const dt=parseDataHora(d.data_hora);
       if(!dt)continue;
@@ -3991,7 +3992,7 @@ function App() {
       if(cache){
         setLoadingMsg("Carregando do cache…");
         const clsNorm=(cache.cls||[]).map(c=>({...c,filial:limparEmpresa(c.filial)}));
-        const disNorm=(cache.dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:d.portaria_inteligente||(d.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE")}));
+        const disNorm=(cache.dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
         setClients(clsNorm);setDispatches(disNorm);if(cache.cls.length>0)setAba("dashboard");
         setLoadingData(false);setLoadingMsg("Sincronizando…");
         return;
@@ -4006,7 +4007,7 @@ function App() {
       setLoadingMsg("Processando dados…");
       salvarCache(cls,dis);
       const clsNorm=(cls||[]).map(c=>({...c,filial:limparEmpresa(c.filial)}));
-      const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:d.portaria_inteligente||(d.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE")}));
+      const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
       setClients(clsNorm);setDispatches(disNorm);if(cls.length>0)setAba("dashboard");
     }catch(e){
       setErroGlobal(e.message||"Erro ao carregar dados. Verifique sua conexão e tente novamente.");
