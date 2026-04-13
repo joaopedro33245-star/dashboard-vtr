@@ -2998,13 +2998,37 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
     readExcel(file,rows=>{
       const total=rows.length;
       const mapped=rows.map(r=>{
-        const codigo=String(r["Código da conta"]||r["Codigo da conta"]||r["Conta"]||r["conta"]||r["codigo_cliente"]||"").trim();
-        const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"").trim();
-        const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"").trim();
-        const fantasiaRaw=String(r["Fantasia (Razão social)"]||r["Fantasia"]||r["fantasia"]||"").trim();
-        const evento=String(r["Evento"]||r["evento"]||"").trim();
-        const viatura=String(r["Viatura"]||r["viatura"]||"").trim();
-        const dataRaw=r["Data de recepção"]||r["Data de recepcao"]||r["Data/Hora"]||r["Data"]||r["data_hora"]||"";
+        // busca case-insensitive nas chaves da linha
+        const col=(keys)=>{
+          for(const k of keys){
+            if(r[k]!==undefined&&String(r[k]).trim()!=="")return String(r[k]);
+            const kl=k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+            for(const rk of Object.keys(r)){
+              const rkl=rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+              if(rkl===kl&&r[rk]!==undefined&&String(r[rk]).trim()!=="")return String(r[rk]);
+            }
+          }
+          return "";
+        };
+        const codigo=col(["Código da conta","Codigo da conta","Conta","conta","codigo_cliente"]).trim();
+        const empresaRaw=col(["Empresa","empresa","Filial","filial"]).trim();
+        const cidadeRaw=col(["Cidade","cidade","CIDADE","Município","Municipio"]).trim();
+        const fantasiaRaw=col(["Fantasia (Razão Social)","Fantasia (Razão social)","Fantasia (Razao Social)","Fantasia (Razao social)","Fantasia","fantasia","Razão Social","Razao Social"]).trim();
+        const evento=col(["Evento","evento"]).trim();
+        const viatura=col(["Viatura","viatura"]).trim();
+        // busca o valor raw da data sem converter para string (pode ser número serial do Excel)
+        const colRaw=(keys)=>{
+          for(const k of keys){
+            if(r[k]!==undefined&&r[k]!=="")return r[k];
+            const kl=k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+            for(const rk of Object.keys(r)){
+              const rkl=rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+              if(rkl===kl&&r[rk]!==undefined&&r[rk]!=="")return r[rk];
+            }
+          }
+          return "";
+        };
+        const dataRaw=colRaw(["Data de recepção","Data de recepcao","Data/Hora","Data","data_hora"]);
         let data_hora="";
         if(dataRaw instanceof Date){data_hora=dataRaw.toLocaleString("pt-BR");}
         else if(typeof dataRaw==="number"&&dataRaw>1000){const excelEpoch=new Date(1899,11,30);const d=new Date(excelEpoch.getTime()+dataRaw*86400000);data_hora=d.toLocaleString("pt-BR");}
