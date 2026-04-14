@@ -447,12 +447,12 @@ function DropZone({ color, fileName, inputRef, onChange, label }) {
 }
 
 function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatchesFiltrados, tipoVisao, accentAtivo, onClose }) {
-  if (!cliente) return null;
   const [obs, setObs] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    if (!cliente) return;
     const cacheKey = `${cliente.codigo_cliente}||${cliente.filial}`;
     if (obsCache.has(cacheKey)) { setObs(obsCache.get(cacheKey)); return; }
     async function loadObs() {
@@ -486,6 +486,7 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
   const eventos = Object.entries(eventoMap).sort((a,b)=>b[1]-a[1]);
   const total = meusDeslocs.length;
 
+  if (!cliente) return null;
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }} onClick={onClose}>
       <div style={{ background:"#0f172a",border:"1px solid rgba(255,255,255,0.1)",borderRadius:20,width:"100%",maxWidth:620,maxHeight:"90vh",overflowY:"auto",padding:28 }} onClick={e=>e.stopPropagation()}>
@@ -1925,7 +1926,6 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
 }
 
 function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria }) {
-  if (!cliente) return null;
   const [obs,setObs]=useState("");
   const [obsHistorico,setObsHistorico]=useState([]);
   const [saving,setSaving]=useState(false);
@@ -1938,6 +1938,7 @@ function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria
     return()=>document.removeEventListener("keydown",handler);
   },[onClose]);
 
+  if (!cliente) return null;
   const meusDeslocs=dispatches.filter(d=>d.codigo_cliente===cliente.codigo_cliente&&d.filial===cliente.filial&&(isPortaria?d.portaria_inteligente:!d.portaria_inteligente));
 
   // -- Dados mês a mês para o gráfico de tendência --
