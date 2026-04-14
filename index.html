@@ -452,7 +452,7 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    if (!cliente) return;
+    if(!cliente) return;
     const cacheKey = `${cliente.codigo_cliente}||${cliente.filial}`;
     if (obsCache.has(cacheKey)) { setObs(obsCache.get(cacheKey)); return; }
     async function loadObs() {
@@ -485,8 +485,8 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
   for (const d of meusDeslocs) eventoMap[d.evento]=(eventoMap[d.evento]||0)+1;
   const eventos = Object.entries(eventoMap).sort((a,b)=>b[1]-a[1]);
   const total = meusDeslocs.length;
-
   if (!cliente) return null;
+
   return (
     <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:3000,display:"flex",alignItems:"center",justifyContent:"center",padding:16 }} onClick={onClose}>
       <div style={{ background:"#0f172a",border:"1px solid rgba(255,255,255,0.1)",borderRadius:20,width:"100%",maxWidth:620,maxHeight:"90vh",overflowY:"auto",padding:28 }} onClick={e=>e.stopPropagation()}>
@@ -541,7 +541,7 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
                 <div key={i} style={{ display:"flex",justifyContent:"space-between",padding:"7px 12px",background:"rgba(255,255,255,0.03)",borderRadius:8,fontSize:11 }}>
                   <span style={{ color:"rgba(255,255,255,0.75)" }}>{d.evento}</span>
                   <div style={{ display:"flex",gap:14,color:"rgba(255,255,255,0.3)",flexShrink:0,marginLeft:12 }}>
-                    <span>{d.viatura}</span><span>{d.data_hora}</span>
+                    <span>{d.viatura}</span><span>{String(d.data_hora||"")}</span>
                   </div>
                 </div>
               ))}
@@ -753,7 +753,7 @@ function ComparativosPeriodo({ dispatches, dispatchesFiltrados, tipoVisao, perio
     if(n){
       nomeMapComp[`${cl.codigo_cliente}||${cl.filial}`]=n;
       // Fallback por código (usado quando filial não bate exatamente)
-      // fallback por código removido — causava contaminação entre filiais com mesmo código
+      // fallback por código removido — causava contaminação entre filiais
     }
   }
 
@@ -1938,8 +1938,10 @@ function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria
     return()=>document.removeEventListener("keydown",handler);
   },[onClose]);
 
-  if (!cliente) return null;
-  const meusDeslocs=dispatches.filter(d=>d.codigo_cliente===cliente.codigo_cliente&&d.filial===cliente.filial&&(isPortaria?d.portaria_inteligente:!d.portaria_inteligente));
+  const meusDeslocs=useMemo(()=>{
+    if(!cliente)return[];
+    return dispatches.filter(d=>d.codigo_cliente===cliente.codigo_cliente&&d.filial===cliente.filial&&(isPortaria?d.portaria_inteligente:!d.portaria_inteligente));
+  },[dispatches,cliente,isPortaria]);
 
   // -- Dados mês a mês para o gráfico de tendência --
   const tendenciaMeses=useMemo(()=>{
@@ -1965,7 +1967,7 @@ function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria
   },[tendenciaMeses]);
 
   useEffect(()=>{
-    if(!supabaseClient)return;
+    if(!supabaseClient||!cliente)return;
     const cacheKey=`${cliente.codigo_cliente}||${cliente.filial}`;
     if(obsCache.has(cacheKey)){
       const cached=obsCache.get(cacheKey);
@@ -1984,7 +1986,9 @@ function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria
       setObs(texto);setObsHistorico(historico);setLoadingObs(false);
     }
     loadObs();
-  },[cliente.codigo_cliente,cliente.filial]);
+  },[cliente?.codigo_cliente,cliente?.filial]);
+
+  if(!cliente)return null;
 
   async function salvarObs(){
     if(!supabaseClient)return;
@@ -2176,7 +2180,7 @@ function ClienteModal({ cliente, dispatches, onClose, supabaseClient, isPortaria
               {meusDeslocs.map((d,i)=>(
                 <div key={i} style={{ display:"flex",justifyContent:"space-between",padding:"8px 12px",background:"rgba(255,255,255,0.03)",borderRadius:8,fontSize:12 }}>
                   <span style={{ color:"rgba(255,255,255,0.7)" }}>{d.evento}</span>
-                  <div style={{ display:"flex",gap:16,color:"rgba(255,255,255,0.35)" }}><span>{d.viatura}</span><span>{d.data_hora}</span></div>
+                  <div style={{ display:"flex",gap:16,color:"rgba(255,255,255,0.35)" }}><span>{d.viatura}</span><span>{String(d.data_hora||"")}</span></div>
                 </div>
               ))}
             </div>
@@ -2371,6 +2375,58 @@ function MesesResumo({ dispatches, filialFiltro, cidadeFiltro, codigosFiltrados,
 }
 
 // ── MELHORIA 2: recebe mesFiltro/setMesFiltro/mesesTodos como props ──
+function AlertaSemDeslocamentos({ dispatches, rankingPorFilial, onSelectCliente }) {
+  const [aberto,setAberto]=React.useState(true);
+  const hoje=Date.now();const MESES=2;
+  const ultimoDesl={};
+  for(const d of dispatches.filter(x=>!x.portaria_inteligente)){
+    const k=`${d.codigo_cliente}||${d.filial}`;const dt=parseDataHora(d.data_hora);
+    if(dt&&(!ultimoDesl[k]||dt>ultimoDesl[k]))ultimoDesl[k]=dt;
+  }
+  const semDesl=rankingPorFilial.filter(c=>{
+    if(!c.mensalidade||c.mensalidade<=0)return false;
+    const k=`${c.codigo_cliente}||${c.filial}`;const ult=ultimoDesl[k];
+    if(!ult)return c.total_deslocamentos===0;
+    return(hoje-ult.getTime())/(1000*60*60*24*30)>=MESES;
+  });
+  if(semDesl.length===0)return null;
+  if(!aberto)return(
+    <div onClick={()=>setAberto(true)} style={{ marginBottom:16,padding:"8px 16px",borderRadius:10,background:"rgba(251,191,36,0.06)",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",display:"flex",alignItems:"center",gap:10 }}>
+      <span>⚠️</span>
+      <span style={{ fontSize:12,color:"#fbbf24",fontWeight:600 }}>{semDesl.length} clientes sem deslocamentos há {MESES}+ meses</span>
+      <span style={{ marginLeft:"auto",fontSize:11,color:"rgba(255,255,255,0.3)" }}>clique para ver</span>
+    </div>
+  );
+  return(
+    <div style={{ marginBottom:20,borderRadius:12,border:"1px solid rgba(251,191,36,0.25)",background:"rgba(251,191,36,0.06)",overflow:"hidden" }}>
+      <div style={{ padding:"12px 18px",borderBottom:"1px solid rgba(251,191,36,0.15)",display:"flex",alignItems:"center",gap:10 }}>
+        <span style={{ fontSize:16 }}>⚠️</span>
+        <div>
+          <div style={{ fontSize:13,fontWeight:700,color:"#fbbf24" }}>Clientes sem deslocamentos há {MESES}+ meses</div>
+          <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:1 }}>Com mensalidade ativa — risco de cancelamento</div>
+        </div>
+        <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:99,background:"rgba(251,191,36,0.15)",color:"#fbbf24",border:"1px solid rgba(251,191,36,0.3)" }}>{semDesl.length}</span>
+        <button onClick={()=>setAberto(false)} style={{ background:"none",border:"none",color:"rgba(255,255,255,0.3)",cursor:"pointer",fontSize:14 }}>✕</button>
+      </div>
+      <div style={{ display:"flex",flexWrap:"wrap" }}>
+        {semDesl.slice(0,8).map((c,i)=>{
+          const k=`${c.codigo_cliente}||${c.filial}`;const ult=ultimoDesl[k];
+          const dias=ult?Math.floor((hoje-ult.getTime())/(1000*60*60*24)):null;
+          return(
+            <div key={i} onClick={()=>onSelectCliente(c)} style={{ flex:"1 1 240px",padding:"10px 18px",borderBottom:"1px solid rgba(255,255,255,0.04)",borderRight:"1px solid rgba(255,255,255,0.04)",cursor:"pointer",transition:"background 0.15s" }} onMouseEnter={e=>e.currentTarget.style.background="rgba(251,191,36,0.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <div style={{ fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{c.nome_cliente}</div>
+              <div style={{ fontSize:10,color:"rgba(255,255,255,0.35)",marginTop:2 }}>{c.filial}</div>
+              <div style={{ fontSize:11,fontWeight:700,color:"#fbbf24",marginTop:4 }}>{dias?`${dias} dias sem desl.`:"Sem registros"}</div>
+            </div>
+          );
+        })}
+      </div>
+      {semDesl.length>8&&<div style={{ padding:"8px 18px",fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"center" }}>+{semDesl.length-8} clientes adicionais</div>}
+    </div>
+  );
+}
+
+
 function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos }) {
   const [filialFiltro,setFilialFiltro]=useState("Todas");
   const [cidadeFiltro,setCidadeFiltro]=useState("Todas");
@@ -2431,17 +2487,18 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
     return Object.entries(eventoMap).map(([evento,total])=>({evento,total})).sort((a,b)=>b.total-a.total).slice(0,7);
   },[dispatches,filialFiltro,cidadeFiltro,rankingPorFilial]);
 
-  if(!kpis)return <EmptyState icon="📊" title="Nenhum dado importado ainda" sub="Vá até a aba Importação, carregue sua planilha de clientes e deslocamentos para visualizar o dashboard." />;
-  if(dispatches.filter(d=>!d.portaria_inteligente).length===0)return <EmptyState icon="🚗" title="Clientes importados! Agora importe os deslocamentos." sub="Vá até a aba Importação e carregue a planilha de deslocamentos para calcular os indicadores." />;
-
-  const totalMensDash=rankingPorFilial.reduce((s,c)=>s+(c.mensalidade||0),0);
-  const totalSaldoDash=rankingPorFilial.reduce((s,c)=>s+(c.mensalidade?c.lucro_real:0),0);
   const tendenciaDash=useMemo(()=>{
     const base=filialFiltro==="Todas"?dispatches.filter(d=>!d.portaria_inteligente):dispatches.filter(d=>!d.portaria_inteligente&&d.filial===filialFiltro);
     const mesMap={};
     for(const d of base){const dt=parseDataHora(d.data_hora);if(!dt)continue;const mk=getMonthKey(dt);mesMap[mk]=(mesMap[mk]||0)+1;}
     return Object.entries(mesMap).sort((a,b)=>a[0].localeCompare(b[0])).slice(-12).map(([mk,total])=>({label:monthLabel(mk),total,mk}));
   },[dispatches,filialFiltro]);
+
+  if(!kpis)return <EmptyState icon="📊" title="Nenhum dado importado ainda" sub="Vá até a aba Importação, carregue sua planilha de clientes e deslocamentos para visualizar o dashboard." />;
+  if(dispatches.filter(d=>!d.portaria_inteligente).length===0)return <EmptyState icon="🚗" title="Clientes importados! Agora importe os deslocamentos." sub="Vá até a aba Importação e carregue a planilha de deslocamentos para calcular os indicadores." />;
+
+  const totalMensDash=rankingPorFilial.reduce((s,c)=>s+(c.mensalidade||0),0);
+  const totalSaldoDash=rankingPorFilial.reduce((s,c)=>s+(c.mensalidade?c.lucro_real:0),0);
 
   return (
     <>
@@ -2463,56 +2520,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
       </div>
 
       {/* ── Alerta: clientes sem deslocamentos há 2+ meses ── */}
-      {(()=>{
-        const hoje=Date.now();const MESES=2;
-        const ultimoDesl={};
-        for(const d of dispatches.filter(x=>!x.portaria_inteligente)){
-          const k=`${d.codigo_cliente}||${d.filial}`;const dt=parseDataHora(d.data_hora);
-          if(dt&&(!ultimoDesl[k]||dt>ultimoDesl[k]))ultimoDesl[k]=dt;
-        }
-        const semDesl=rankingPorFilial.filter(c=>{
-          if(!c.mensalidade||c.mensalidade<=0)return false;
-          const k=`${c.codigo_cliente}||${c.filial}`;const ult=ultimoDesl[k];
-          if(!ult)return c.total_deslocamentos===0;
-          return(hoje-ult.getTime())/(1000*60*60*24*30)>=MESES;
-        });
-        if(semDesl.length===0)return null;
-        const [aberto,setAberto]=useState(true);
-        if(!aberto)return(
-          <div onClick={()=>setAberto(true)} style={{ marginBottom:16,padding:"8px 16px",borderRadius:10,background:"rgba(251,191,36,0.06)",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",display:"flex",alignItems:"center",gap:10 }}>
-            <span>⚠️</span>
-            <span style={{ fontSize:12,color:"#fbbf24",fontWeight:600 }}>{semDesl.length} clientes sem deslocamentos há {MESES}+ meses</span>
-            <span style={{ marginLeft:"auto",fontSize:11,color:"rgba(255,255,255,0.3)" }}>clique para ver</span>
-          </div>
-        );
-        return(
-          <div style={{ marginBottom:20,borderRadius:12,border:"1px solid rgba(251,191,36,0.25)",background:"rgba(251,191,36,0.06)",overflow:"hidden" }}>
-            <div style={{ padding:"12px 18px",borderBottom:"1px solid rgba(251,191,36,0.15)",display:"flex",alignItems:"center",gap:10 }}>
-              <span style={{ fontSize:16 }}>⚠️</span>
-              <div>
-                <div style={{ fontSize:13,fontWeight:700,color:"#fbbf24" }}>Clientes sem deslocamentos há {MESES}+ meses</div>
-                <div style={{ fontSize:11,color:"rgba(255,255,255,0.4)",marginTop:1 }}>Com mensalidade ativa — risco de cancelamento</div>
-              </div>
-              <span style={{ marginLeft:"auto",fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:99,background:"rgba(251,191,36,0.15)",color:"#fbbf24",border:"1px solid rgba(251,191,36,0.3)" }}>{semDesl.length}</span>
-              <button onClick={()=>setAberto(false)} style={{ background:"none",border:"none",color:"rgba(255,255,255,0.3)",cursor:"pointer",fontSize:14 }}>✕</button>
-            </div>
-            <div style={{ display:"flex",flexWrap:"wrap" }}>
-              {semDesl.slice(0,8).map((c,i)=>{
-                const k=`${c.codigo_cliente}||${c.filial}`;const ult=ultimoDesl[k];
-                const dias=ult?Math.floor((hoje-ult.getTime())/(1000*60*60*24)):null;
-                return(
-                  <div key={i} onClick={()=>setClienteSelecionado(c)} style={{ flex:"1 1 240px",padding:"10px 18px",borderBottom:"1px solid rgba(255,255,255,0.04)",borderRight:"1px solid rgba(255,255,255,0.04)",cursor:"pointer",transition:"background 0.15s" }} onMouseEnter={e=>e.currentTarget.style.background="rgba(251,191,36,0.06)"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{ fontSize:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" }}>{c.nome_cliente}<span style={{ fontSize:9,color:"rgba(255,255,255,0.3)",marginLeft:4 }}>↗</span></div>
-                    <div style={{ fontSize:10,color:"rgba(255,255,255,0.35)",marginTop:2 }}>{c.filial}</div>
-                    <div style={{ fontSize:11,fontWeight:700,color:"#fbbf24",marginTop:4 }}>{dias?`${dias} dias sem desl.`:"Sem registros"}</div>
-                  </div>
-                );
-              })}
-            </div>
-            {semDesl.length>8&&<div style={{ padding:"8px 18px",fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"center" }}>+{semDesl.length-8} clientes adicionais</div>}
-          </div>
-        );
-      })()}
+      <AlertaSemDeslocamentos dispatches={dispatches} rankingPorFilial={rankingPorFilial} onSelectCliente={setClienteSelecionado} />
 
       {/* ── Tendência + Top Eventos ── */}
       <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
@@ -3000,37 +3008,13 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
     readExcel(file,rows=>{
       const total=rows.length;
       const mapped=rows.map(r=>{
-        // busca case-insensitive nas chaves da linha
-        const col=(keys)=>{
-          for(const k of keys){
-            if(r[k]!==undefined&&String(r[k]).trim()!=="")return String(r[k]);
-            const kl=k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-            for(const rk of Object.keys(r)){
-              const rkl=rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-              if(rkl===kl&&r[rk]!==undefined&&String(r[rk]).trim()!=="")return String(r[rk]);
-            }
-          }
-          return "";
-        };
-        const codigo=col(["Código da conta","Codigo da conta","Conta","conta","codigo_cliente"]).trim();
-        const empresaRaw=col(["Empresa","empresa","Filial","filial"]).trim();
-        const cidadeRaw=col(["Cidade","cidade","CIDADE","Município","Municipio"]).trim();
-        const fantasiaRaw=col(["Fantasia (Razão Social)","Fantasia (Razão social)","Fantasia (Razao Social)","Fantasia (Razao social)","Fantasia","fantasia","Razão Social","Razao Social"]).trim();
-        const evento=col(["Evento","evento"]).trim();
-        const viatura=col(["Viatura","viatura"]).trim();
-        // busca o valor raw da data sem converter para string (pode ser número serial do Excel)
-        const colRaw=(keys)=>{
-          for(const k of keys){
-            if(r[k]!==undefined&&r[k]!=="")return r[k];
-            const kl=k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-            for(const rk of Object.keys(r)){
-              const rkl=rk.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-              if(rkl===kl&&r[rk]!==undefined&&r[rk]!=="")return r[rk];
-            }
-          }
-          return "";
-        };
-        const dataRaw=colRaw(["Data de recepção","Data de recepcao","Data/Hora","Data","data_hora"]);
+        const codigo=String(r["Código da conta"]||r["Codigo da conta"]||r["Conta"]||r["conta"]||r["codigo_cliente"]||"").trim();
+        const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"").trim();
+        const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"").trim();
+        const fantasiaRaw=String(r["Fantasia (Razão social)"]||r["Fantasia"]||r["fantasia"]||"").trim();
+        const evento=String(r["Evento"]||r["evento"]||"").trim();
+        const viatura=String(r["Viatura"]||r["viatura"]||"").trim();
+        const dataRaw=r["Data de recepção"]||r["Data de recepcao"]||r["Data/Hora"]||r["Data"]||r["data_hora"]||"";
         let data_hora="";
         if(dataRaw instanceof Date){data_hora=dataRaw.toLocaleString("pt-BR");}
         else if(typeof dataRaw==="number"&&dataRaw>1000){const excelEpoch=new Date(1899,11,30);const d=new Date(excelEpoch.getTime()+dataRaw*86400000);data_hora=d.toLocaleString("pt-BR");}
@@ -3152,7 +3136,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
             <div style={{ overflowX:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.07)" }}>
               <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
                 <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>{["Código","Filial","Data","Evento","Portaria?"].map(h=><th key={h} style={{ padding:"8px 12px",textAlign:"left",color:"rgba(255,255,255,0.3)",fontSize:10,textTransform:"uppercase" }}>{h}</th>)}</tr></thead>
-                <tbody>{dispatchPreview.rows.slice(0,5).map((r,i)=><tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}><td style={{ padding:"8px 12px",color:"#818cf8",fontFamily:"monospace" }}>{r.codigo_cliente}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{r.filial}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{r.data_hora}</td><td style={{ padding:"8px 12px",color:"#fff" }}>{r.evento}</td><td style={{ padding:"8px 12px" }}>{r.portaria_inteligente?<span style={{ color:"#a78bfa",fontWeight:700 }}>🏢 Sim</span>:<span style={{ color:"rgba(255,255,255,0.2)" }}>—</span>}</td></tr>)}</tbody>
+                <tbody>{dispatchPreview.rows.slice(0,5).map((r,i)=><tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}><td style={{ padding:"8px 12px",color:"#818cf8",fontFamily:"monospace" }}>{r.codigo_cliente}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{r.filial}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{String(r.data_hora||"")}</td><td style={{ padding:"8px 12px",color:"#fff" }}>{r.evento}</td><td style={{ padding:"8px 12px" }}>{r.portaria_inteligente?<span style={{ color:"#a78bfa",fontWeight:700 }}>🏢 Sim</span>:<span style={{ color:"rgba(255,255,255,0.2)" }}>—</span>}</td></tr>)}</tbody>
               </table>
             </div>
             <div style={{ display:"flex",gap:10,marginTop:14 }}>
@@ -3213,7 +3197,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
 }
 </script>
 <script type="text/babel" data-presets="react">
-function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, onAtualizarCliente, isAdmin }) {
+function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }) {
   const [busca,setBusca]=useState("");
   const [buscaDebounced,setBuscaDebounced]=useState("");
   const [filialFiltro,setFilialFiltro]=useState("Todas");const [cidadeFiltro,setCidadeFiltro]=useState("Todas");
@@ -3319,24 +3303,8 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, onAtualiz
     else{setSortBy(campo);setSortDir("asc");}
   }
 
-  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente).eq("filial",c.filial_original||c.filial);if(onAtualizarCliente){onAtualizarCliente(c.codigo_cliente,c.filial,{status:novoStatus});}else{onRefresh();}},[supabaseClient,onRefresh,onAtualizarCliente]);
-  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){
-        setModalNovoCliente(false);
-        setMsgSalvo("✅ Cliente salvo!");
-        setTimeout(()=>setMsgSalvo(""),4000);
-        // Adiciona o novo cliente no estado local imediatamente
-        if(onAtualizarCliente){
-          onAtualizarCliente(dados.codigo, limparEmpresa(dados.filial), {
-            nome_cliente:dados.nome,
-            filial:limparEmpresa(dados.filial),
-            cidade:dados.cidade||"",
-            bairro:dados.bairro||"",
-            mensalidade:parseFloat(dados.mensalidade)||0,
-            status:"ativo"
-          });
-        }
-        onRefresh();
-      }else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
+  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);onRefresh();},[supabaseClient,onRefresh]);
+  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
   async function salvarEdicao(dados){
     setSalvando(true);
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
@@ -3350,31 +3318,37 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, onAtualiz
       custo_individual:custoVal,
       meta_desl:metaVal
     };
-    // Busca o registro pelo código para pegar o id e filial reais do banco
-    const{data:found,error:findError}=await supabaseClient.from("clients")
-      .select("id,filial,codigo_cliente").eq("codigo_cliente",editando.codigo_cliente).limit(20);
-    if(findError||!found||found.length===0){
-      setSalvando(false);
-      setMsgSalvo("⚠️ Cliente não encontrado no banco: "+editando.codigo_cliente);
-      return;
+    // Usa id quando disponível (evita problema de filial normalizada vs banco)
+    let query=supabaseClient.from("clients").update(payload);
+    if(editando.id){
+      query=query.eq("id",editando.id);
+    } else {
+      query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial);
     }
-    // Filtra pelo id se disponível, senão pega todos com esse código
-    const ids=editando.id?[editando.id]:found.map(r=>r.id);
-    const{data:updateData,error}=await supabaseClient.from("clients").update(payload).in("id",ids).select();
+    const{data:updateData,error}=await query.select();
     setSalvando(false);
-    if(!error&&updateData&&updateData.length>0){
-      // Atualiza o estado local imediatamente sem recarregar tudo
-      if(onAtualizarCliente){
-        onAtualizarCliente(editando.codigo_cliente, editando.filial, payload);
+    if(!error){
+      if(!updateData||updateData.length===0){
+        // Tenta buscar o id real e atualizar
+        const{data:found}=await supabaseClient.from("clients")
+          .select("id").eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial_original||editando.filial).limit(10);
+        if(found&&found.length>0){
+          const ids=found.map(r=>r.id);
+          await supabaseClient.from("clients").update(payload).in("id",ids);
+          setEditando(null);
+          setMsgSalvo("✅ Cliente atualizado!");
+          setTimeout(()=>setMsgSalvo(""),4000);
+          onRefresh();
+        } else {
+          setMsgSalvo("⚠️ Nenhum registro encontrado para código "+editando.codigo_cliente);
+        }
       } else {
+        setEditando(null);
+        setMsgSalvo("✅ Cliente atualizado!");
+        setTimeout(()=>setMsgSalvo(""),4000);
         onRefresh();
       }
-      setEditando(null);
-      setMsgSalvo("✅ Cliente atualizado!");
-      setTimeout(()=>setMsgSalvo(""),4000);
-    } else if(!error){
-      setMsgSalvo("⚠️ Nenhum registro atualizado. Verifique o console.");
-    } else {
+    }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
   }
@@ -3923,7 +3897,7 @@ class ErrorBoundary extends React.Component {
           <div style={{fontSize:40}}>⚠️</div>
           <div style={{fontSize:18,fontWeight:700,color:"#f87171"}}>Erro ao renderizar o dashboard</div>
           <div style={{fontSize:13,color:"rgba(255,255,255,0.4)",maxWidth:480,textAlign:"center"}}>{String(this.state.error?.message||"Erro desconhecido")}</div>
-          <button onClick={()=>{this.setState({hasError:false,error:null});}} style={{marginTop:8,padding:"10px 24px",borderRadius:10,border:"1px solid rgba(56,189,248,0.4)",background:"rgba(56,189,248,0.1)",color:"#38bdf8",fontSize:14,cursor:"pointer",fontWeight:600}}>🔄 Tentar novamente</button>
+          <button onClick={()=>this.setState({hasError:false,error:null})} style={{marginTop:8,padding:"10px 24px",borderRadius:10,border:"1px solid rgba(56,189,248,0.4)",background:"rgba(56,189,248,0.1)",color:"#38bdf8",fontSize:14,cursor:"pointer",fontWeight:600}}>🔄 Tentar novamente</button>
           <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"rgba(255,255,255,0.5)",fontSize:13,cursor:"pointer"}}>↺ Recarregar página</button>
         </div>
       );
@@ -4073,17 +4047,6 @@ function App() {
   }
 
   async function handleLogin(user){setUsuario(user);await carregarDados();}
-
-  // Atualiza um cliente no estado local sem recarregar tudo do banco
-  function atualizarClienteLocal(codigo_cliente, filial, novosValores){
-    setClients(prev=>prev.map(c=>
-      c.codigo_cliente===codigo_cliente && c.filial===filial
-        ? {...c,...novosValores}
-        : c
-    ));
-    // Invalida o cache para próximo carregamento pegar dados frescos
-    try{localStorage.removeItem('vtr_dados_cache');}catch{}
-  }
   async function handleLogout(){await supabaseClient.auth.signOut();setUsuario(null);setClients([]);setDispatches([]);}
 
   async function handleImportClients(data){
@@ -4137,7 +4100,7 @@ function App() {
       if(novosClientes.length>0){for(let i=0;i<novosClientes.length;i+=500)await supabaseClient.from("clients").upsert(novosClientes.slice(i,i+500),{onConflict:"codigo_cliente,filial"});}
       const existentesSet=new Set();let fromDesl=0;
       while(true){const{data:existentes}=await supabaseClient.from("dispatches").select("codigo_cliente,filial,data_hora,evento,viatura").range(fromDesl,fromDesl+999);if(!existentes||existentes.length===0)break;for(const e of existentes)existentesSet.add(`${e.codigo_cliente}||${e.filial}||${e.data_hora}||${e.evento}||${e.viatura}`);if(existentes.length<1000)break;fromDesl+=1000;}
-      const novos=sanitized.filter(d=>!existentesSet.has(`${d.codigo_cliente}||${d.filial}||${d.data_hora}||${d.evento}||${d.viatura}`));
+      const novos=sanitized.filter(d=>!existentesSet.has(`${d.codigo_cliente}||${d.filial}||${String(d.data_hora||"")}||${d.evento}||${d.viatura}`));
       const duplicados=sanitized.length-novos.length;
       let totalInserido=0;
       for(let i=0;i<novos.length;i+=200){const lote=novos.slice(i,i+200);const{error:insError}=await supabaseClient.from("dispatches").insert(lote);if(insError){setImportMsg("❌ Erro Supabase: "+insError.message);setLoadingData(false);return;}totalInserido+=lote.length;}
@@ -4283,7 +4246,7 @@ function App() {
       </div>
 
       {aba==="dashboard"&&<DashboardTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
-      {aba==="clientes"&&<ClientesTab clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} onAtualizarCliente={atualizarClienteLocal} isAdmin={isAdmin} />}
+      {aba==="clientes"&&<ClientesTab clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} isAdmin={isAdmin} />}
       {aba==="relatorios"&&<RelatoriosTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} />}
       {aba==="portaria"&&<PortariaTab dispatches={dispatches} clients={clients} supabaseClient={supabaseClient} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
       {aba==="filiais"&&<FiliaisTab clients={clients} dispatches={dispatches} />}
