@@ -3213,7 +3213,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
 }
 </script>
 <script type="text/babel" data-presets="react">
-function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }) {
+function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, onAtualizarCliente, isAdmin }) {
   const [busca,setBusca]=useState("");
   const [buscaDebounced,setBuscaDebounced]=useState("");
   const [filialFiltro,setFilialFiltro]=useState("Todas");const [cidadeFiltro,setCidadeFiltro]=useState("Todas");
@@ -3319,8 +3319,24 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     else{setSortBy(campo);setSortDir("asc");}
   }
 
-  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);onRefresh();},[supabaseClient,onRefresh]);
-  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
+  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente).eq("filial",c.filial_original||c.filial);if(onAtualizarCliente){onAtualizarCliente(c.codigo_cliente,c.filial,{status:novoStatus});}else{onRefresh();}},[supabaseClient,onRefresh,onAtualizarCliente]);
+  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){
+        setModalNovoCliente(false);
+        setMsgSalvo("✅ Cliente salvo!");
+        setTimeout(()=>setMsgSalvo(""),4000);
+        // Adiciona o novo cliente no estado local imediatamente
+        if(onAtualizarCliente){
+          onAtualizarCliente(dados.codigo, limparEmpresa(dados.filial), {
+            nome_cliente:dados.nome,
+            filial:limparEmpresa(dados.filial),
+            cidade:dados.cidade||"",
+            bairro:dados.bairro||"",
+            mensalidade:parseFloat(dados.mensalidade)||0,
+            status:"ativo"
+          });
+        }
+        onRefresh();
+      }else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
   async function salvarEdicao(dados){
     setSalvando(true);
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
@@ -3334,37 +3350,31 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       custo_individual:custoVal,
       meta_desl:metaVal
     };
-    // Usa id quando disponível (evita problema de filial normalizada vs banco)
-    let query=supabaseClient.from("clients").update(payload);
-    if(editando.id){
-      query=query.eq("id",editando.id);
-    } else {
-      query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial);
+    // Busca o registro pelo código para pegar o id e filial reais do banco
+    const{data:found,error:findError}=await supabaseClient.from("clients")
+      .select("id,filial,codigo_cliente").eq("codigo_cliente",editando.codigo_cliente).limit(20);
+    if(findError||!found||found.length===0){
+      setSalvando(false);
+      setMsgSalvo("⚠️ Cliente não encontrado no banco: "+editando.codigo_cliente);
+      return;
     }
-    const{data:updateData,error}=await query.select();
+    // Filtra pelo id se disponível, senão pega todos com esse código
+    const ids=editando.id?[editando.id]:found.map(r=>r.id);
+    const{data:updateData,error}=await supabaseClient.from("clients").update(payload).in("id",ids).select();
     setSalvando(false);
-    if(!error){
-      if(!updateData||updateData.length===0){
-        // Tenta buscar o id real e atualizar
-        const{data:found}=await supabaseClient.from("clients")
-          .select("id").eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial).limit(10);
-        if(found&&found.length>0){
-          const ids=found.map(r=>r.id);
-          await supabaseClient.from("clients").update(payload).in("id",ids);
-          setEditando(null);
-          setMsgSalvo("✅ Cliente atualizado!");
-          setTimeout(()=>setMsgSalvo(""),4000);
-          onRefresh();
-        } else {
-          setMsgSalvo("⚠️ Nenhum registro encontrado para código "+editando.codigo_cliente);
-        }
+    if(!error&&updateData&&updateData.length>0){
+      // Atualiza o estado local imediatamente sem recarregar tudo
+      if(onAtualizarCliente){
+        onAtualizarCliente(editando.codigo_cliente, editando.filial, payload);
       } else {
-        setEditando(null);
-        setMsgSalvo("✅ Cliente atualizado!");
-        setTimeout(()=>setMsgSalvo(""),4000);
         onRefresh();
       }
-    }else{
+      setEditando(null);
+      setMsgSalvo("✅ Cliente atualizado!");
+      setTimeout(()=>setMsgSalvo(""),4000);
+    } else if(!error){
+      setMsgSalvo("⚠️ Nenhum registro atualizado. Verifique o console.");
+    } else {
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
   }
@@ -4038,9 +4048,9 @@ function App() {
       const cache=lerCache();
       if(cache){
         setLoadingMsg("Carregando do cache…");
-        const clsNorm=(cache.cls||[]).map(c=>({...c,filial:limparEmpresa(c.filial)}));
+        const clsNorm=(cache.cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
         const disNorm=(cache.dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
-        setClients(clsNorm);setDispatches(disNorm);if(cache.cls.length>0)setAba("dashboard");
+        setClients(clsNorm);setDispatches(disNorm);
         setLoadingData(false);setLoadingMsg("Sincronizando…");
         return;
       }
@@ -4053,9 +4063,9 @@ function App() {
       const dis=await fetchAll("dispatches","data_hora",false);
       setLoadingMsg("Processando dados…");
       salvarCache(cls,dis);
-      const clsNorm=(cls||[]).map(c=>({...c,filial:limparEmpresa(c.filial)}));
+      const clsNorm=(cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
       const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
-      setClients(clsNorm);setDispatches(disNorm);if(cls.length>0)setAba("dashboard");
+      setClients(clsNorm);setDispatches(disNorm);
     }catch(e){
       setErroGlobal(e.message||"Erro ao carregar dados. Verifique sua conexão e tente novamente.");
     }
@@ -4063,6 +4073,17 @@ function App() {
   }
 
   async function handleLogin(user){setUsuario(user);await carregarDados();}
+
+  // Atualiza um cliente no estado local sem recarregar tudo do banco
+  function atualizarClienteLocal(codigo_cliente, filial, novosValores){
+    setClients(prev=>prev.map(c=>
+      c.codigo_cliente===codigo_cliente && c.filial===filial
+        ? {...c,...novosValores}
+        : c
+    ));
+    // Invalida o cache para próximo carregamento pegar dados frescos
+    try{localStorage.removeItem('vtr_dados_cache');}catch{}
+  }
   async function handleLogout(){await supabaseClient.auth.signOut();setUsuario(null);setClients([]);setDispatches([]);}
 
   async function handleImportClients(data){
@@ -4093,7 +4114,7 @@ function App() {
       if(error){erros++;erroMsg=error.message||JSON.stringify(error);}
     }
     if(erros>0){setImportMsg("❌ Erro: "+erroMsg);setLoadingData(false);return;}
-    try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("clientes",deduped.length,usuario?.nome); setLastUpdated(new Date().toLocaleString("pt-BR"));setImportMsg("✅ Clientes importados com sucesso!");setTimeout(()=>setImportMsg(""),5000);await carregarDados(true);setAba("dashboard");
+    try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("clientes",deduped.length,usuario?.nome); setLastUpdated(new Date().toLocaleString("pt-BR"));setImportMsg("✅ Clientes importados com sucesso!");setTimeout(()=>setImportMsg(""),5000);await carregarDados(true);
   }
 
   async function handleImportDispatches(data){
@@ -4124,7 +4145,7 @@ function App() {
       const msgNovos=novosClientes.length>0?` · ${novosClientes.length} clientes novos`:"";
       const msgDup=duplicados>0?` · ${duplicados} duplicados ignorados`:"";
       setImportMsg("✅ "+totalInserido+" deslocamentos adicionados!"+msgNovos+msgDup);
-      try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("deslocamentos",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);setAba("dashboard");
+      try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("deslocamentos",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);
     }catch(e){setImportMsg("❌ Erro ao importar: "+e.message);setLoadingData(false);}
   }
 
@@ -4262,7 +4283,7 @@ function App() {
       </div>
 
       {aba==="dashboard"&&<DashboardTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
-      {aba==="clientes"&&<ClientesTab clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} isAdmin={isAdmin} />}
+      {aba==="clientes"&&<ClientesTab clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} onAtualizarCliente={atualizarClienteLocal} isAdmin={isAdmin} />}
       {aba==="relatorios"&&<RelatoriosTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} />}
       {aba==="portaria"&&<PortariaTab dispatches={dispatches} clients={clients} supabaseClient={supabaseClient} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
       {aba==="filiais"&&<FiliaisTab clients={clients} dispatches={dispatches} />}
