@@ -978,6 +978,7 @@ function ComparativosMeses({ dispatches, dispatchesFiltrados, tipoVisao, clients
 }
 
 function EvolucaoTable({ data, labelFn, periodLabel, accentColor, tipoVisao }) {
+  if(!data||!data.periodos||!data.clientes)return<div style={{padding:32,textAlign:"center",color:"rgba(255,255,255,0.2)",fontSize:12}}>Sem dados suficientes</div>;
   const bgBase=accentColor==="#fb923c"?"251,146,60":"56,189,248";
   return (
     <div>
@@ -3345,7 +3346,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       if(!updateData||updateData.length===0){
         // Tenta buscar o id real e atualizar
         const{data:found}=await supabaseClient.from("clients")
-          .select("id").eq("codigo_cliente",editando.codigo_cliente).limit(10);
+          .select("id").eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial).limit(10);
         if(found&&found.length>0){
           const ids=found.map(r=>r.id);
           await supabaseClient.from("clients").update(payload).in("id",ids);
@@ -3900,6 +3901,27 @@ function BuscaGlobal({ clients, dispatches, onSelectCliente, onClose }) {
 const LOG_KEY_GLOBAL="vtr_import_log";
 function lerLogs(){try{const raw=localStorage.getItem(LOG_KEY_GLOBAL);return raw?JSON.parse(raw):[];}catch{return[];}}
 
+class ErrorBoundary extends React.Component {
+  constructor(props){super(props);this.state={hasError:false,error:null};}
+  static getDerivedStateFromError(error){return{hasError:true,error};}
+  componentDidCatch(error,info){console.error("Dashboard erro:",error,info);}
+  render(){
+    if(this.state.hasError){
+      return(
+        <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#080c14",flexDirection:"column",gap:16,padding:32}}>
+          <div style={{fontSize:40}}>⚠️</div>
+          <div style={{fontSize:18,fontWeight:700,color:"#f87171"}}>Erro ao renderizar o dashboard</div>
+          <div style={{fontSize:13,color:"rgba(255,255,255,0.4)",maxWidth:480,textAlign:"center"}}>{String(this.state.error?.message||"Erro desconhecido")}</div>
+          <button onClick={()=>{this.setState({hasError:false,error:null});}} style={{marginTop:8,padding:"10px 24px",borderRadius:10,border:"1px solid rgba(56,189,248,0.4)",background:"rgba(56,189,248,0.1)",color:"#38bdf8",fontSize:14,cursor:"pointer",fontWeight:600}}>🔄 Tentar novamente</button>
+          <button onClick={()=>window.location.reload()} style={{padding:"10px 24px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"rgba(255,255,255,0.5)",fontSize:13,cursor:"pointer"}}>↺ Recarregar página</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -4259,7 +4281,7 @@ function App() {
 }
 
 const root=ReactDOM.createRoot(document.getElementById("root"));
-root.render(React.createElement(App));
+root.render(React.createElement(ErrorBoundary,null,React.createElement(App)));
 </script>
 </body>
 </html>
