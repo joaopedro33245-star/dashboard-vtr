@@ -2788,7 +2788,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
 }
 
 const MENSALIDADES_PADRAO=[
-  {filialKey:"SIDERALTECH",valor:67.44},{filialKey:"VISION SEGURANCA",valor:66.00},{filialKey:"2 PROGUARD",valor:65.00},
+  {filialKey:"SIDERALTECH",valor:67.44},{filialKey:"VISION SEGURANCA",valor:66.00},{filialKey:"2 PROGUARD",valor:65.00},{filialKey:"1 P3 SOLUCOES",valor:66.00},
   {filialKey:"4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA",valor:65.00},{filialKey:"OVERTEC",valor:72.21},
   {filialKey:"3 LUXUS SERVICOS E TECNOLOGIA LTDA",valor:88.44},
 ];
@@ -2906,7 +2906,7 @@ function PiClientImport({ onImportClients, clients, supabaseClient }) {
 
 function MensalidadesPadraoCard({ clients, supabaseClient, onRefresh }) {
   const [aplicando,setAplicando]=useState(false);const [msg,setMsg]=useState("");const [preview,setPreview]=useState(null);const [detalhes,setDetalhes]=useState("");
-  const resumo=useMemo(()=>MENSALIDADES_PADRAO.map(({filialKey,valor})=>{const matchFn=c=>c.filial&&(c.filial.toUpperCase()===filialKey.toUpperCase()||c.filial.toUpperCase().includes(filialKey.toUpperCase().split(" ")[0]));const semMens=clients.filter(c=>matchFn(c)&&(!c.mensalidade||parseFloat(c.mensalidade)===0));const comMens=clients.filter(c=>matchFn(c)&&parseFloat(c.mensalidade)>0);return{filialKey,valor,semMens:semMens.length,comMens:comMens.length,clientes:semMens};}),[clients]);
+  const resumo=useMemo(()=>MENSALIDADES_PADRAO.map(({filialKey,valor})=>{const matchFn=c=>c.filial&&c.filial.toUpperCase()===filialKey.toUpperCase();const semMens=clients.filter(c=>matchFn(c)&&(!c.mensalidade||parseFloat(c.mensalidade)===0));const comMens=clients.filter(c=>matchFn(c)&&parseFloat(c.mensalidade)>0);return{filialKey,valor,semMens:semMens.length,comMens:comMens.length,clientes:semMens};}),[clients]);
   const totalAfetados=resumo.reduce((s,r)=>s+r.semMens,0);
   async function aplicarMensalidades(){
     if(totalAfetados===0)return;setAplicando(true);setMsg("Buscando clientes no banco...");setDetalhes("");let totalSalvo=0;let log=[];
