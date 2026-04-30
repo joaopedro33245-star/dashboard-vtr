@@ -14,13 +14,15 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script>
     // ═══════════════════════════════════════════════════════════
-    //  CONFIGURAÇÃO — edite apenas este bloco
-    //  Não compartilhe este arquivo publicamente após preencher.
+    //  CONFIGURAÇÃO carregada com segurança pelo Vercel
+    //  As chaves ficam nas variáveis de ambiente do Vercel,
+    //  nunca expostas no GitHub.
     // ═══════════════════════════════════════════════════════════
-    window._SUPABASE_URL  = "https://edfnqwjhugptbmjlgysi.supabase.co";
-    window._SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkZm5xd2podWdwdGJtamxneXNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNjUyMjEsImV4cCI6MjA4ODc0MTIyMX0.fpHwhOGoy-9jQIQMwyKs0SZmnnQG50VwvEBOdFcFVr8";
+    // As variáveis são injetadas pelo endpoint /config.js
+    // (api/config.js no Vercel) — veja vercel.json
     // ═══════════════════════════════════════════════════════════
   </script>
+  <script src="/config.js"></script>
   <script>
     (function() {
       var url  = window._SUPABASE_URL;
@@ -110,7 +112,7 @@ if (window._configMissing || !window._supabaseReady) {
           " não foi encontrado. Crie-o no mesmo diretório com:"
         ),
         React.createElement("pre", { style:{ background:"rgba(0,0,0,0.4)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"14px 18px", fontSize:12, color:"#34d399", overflowX:"auto", lineHeight:1.8 } },
-          'window._SUPABASE_URL  = "https://SEU-PROJETO.supabase.co";\nwindow._SUPABASE_ANON = "sua-anon-key-aqui";'
+          'window._SUPABASE_URL  = "https://SEU-PROJETO.supabase.co";\nwindow._SUPABASE_ANON = "sua-anon-key-aqui";\nwindow._SEGWARE_TOKEN = "Bearer SEU-TOKEN-SEGWARE-AQUI";'
         ),
         React.createElement("p", { style:{ fontSize:11, color:"rgba(255,255,255,0.25)", marginTop:16 } },
           "⚠️ Nunca commite o config.js em repositórios públicos. Adicione ao .gitignore."
@@ -154,6 +156,103 @@ const STATUS_CONFIG = {
 };
 
 const obsCache = new Map();
+
+// ═══════════════════════════════════════════════════════════════
+// INTEGRAÇÃO SEGWARE — busca deslocamentos automaticamente
+// Status: 2=DISPLACEMENT, 3=DISPLACEMENT_STARTED,
+//         4=IN_PLACE, 7=IN_PLACE_DONE
+// ═══════════════════════════════════════════════════════════════
+const SEGWARE_API    = "https://api.segware.com.br/events";
+const SEGWARE_STATUS = [2, 3, 4, 7];
+const SEG_CACHE_KEY  = "vtr_segware_ultima_sync";
+
+function getSegwareToken() { return (window._SEGWARE_TOKEN || "").trim(); }
+
+function fmtSegDate(d) {
+  const p = n => String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+}
+
+function labelStatus(code) {
+  const m = {2:"Deslocamento",3:"Desl. Iniciado",4:"No Local",7:"Concluído VTR",8:"URA"};
+  return m[code] || ("Status "+code);
+}
+
+async function fetchSegwareWindow(dataInicio, dataFim) {
+  const token = getSegwareToken();
+  if (!token) throw new Error("Token Segware não configurado. Adicione window._SEGWARE_TOKEN no config.js");
+  const url = SEGWARE_API+"?startDate="+fmtSegDate(dataInicio)+"&endDate="+fmtSegDate(dataFim);
+  const resp = await fetch(url, { method:"GET", headers:{"Authorization":token,"Content-Type":"application/json"} });
+  if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
+  const json = await resp.json();
+  const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || []);
+  return lista.filter(ev => {
+    const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
+    const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
+    const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus);
+    return SEGWARE_STATUS.includes(Number(cod));
+  });
+}
+
+function segwareToDispatch(ev, filialPadrao) {
+  const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
+  const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
+  const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0);
+  const rawDate = ev.openedAt || ev.createdAt || ev.date || ev.dataHora || ev.datetime || "";
+  const dataHora = rawDate ? new Date(rawDate).toLocaleString("pt-BR") : "";
+  const codCliente = String(ev.clientCode || ev.clientId || ev.codigoCliente || (ev.client && ev.client.code) || "SEM-COD").trim();
+  const nomeCliente = String(ev.clientName || (ev.client && ev.client.name) || ev.nomeCliente || codCliente).trim();
+  const filial = String(ev.monitoringCenter || ev.filial || ev.branch || filialPadrao || "SEGWARE").trim();
+  const evento = "[Segware] "+labelStatus(Number(cod))+" — Ocorrência #"+(ev.id || ev.occurrenceId || "?");
+  const viatura = String(ev.vehiclePlate || (ev.vehicle && ev.vehicle.plate) || ev.viatura || "").trim();
+  return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||ev.occurrenceId||"") };
+}
+
+async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
+  diasAtras = diasAtras || 30;
+  const token = getSegwareToken();
+  if (!token) return { novos:0, erro:"Token não configurado. Adicione window._SEGWARE_TOKEN no config.js" };
+  try {
+    const agora = new Date();
+    const inicio = new Date(agora.getTime() - diasAtras * 86400000);
+    const janelas = [];
+    let cur = new Date(inicio);
+    while (cur < agora) {
+      const fim = new Date(Math.min(cur.getTime() + 30*86400000, agora.getTime()));
+      janelas.push({ inicio: new Date(cur), fim });
+      cur = new Date(fim.getTime() + 1000);
+    }
+    let todos = [];
+    for (const jan of janelas) { const lote = await fetchSegwareWindow(jan.inicio, jan.fim); todos = todos.concat(lote); }
+    if (todos.length === 0) return { novos:0, total:0, erro:null };
+    const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
+    const existentesSet = new Set();
+    let fromIdx = 0;
+    while (true) {
+      const { data:ex } = await supabase.from("dispatches").select("codigo_cliente,filial,data_hora,evento,viatura").range(fromIdx, fromIdx+999);
+      if (!ex || ex.length === 0) break;
+      for (const e of ex) existentesSet.add(e.codigo_cliente+"||"+e.filial+"||"+e.data_hora+"||"+e.evento+"||"+e.viatura);
+      if (ex.length < 1000) break;
+      fromIdx += 1000;
+    }
+    const novos = dispatches.filter(d => !existentesSet.has(d.codigo_cliente+"||"+d.filial+"||"+d.data_hora+"||"+d.evento+"||"+d.viatura));
+    if (novos.length > 0) {
+      const paraInserir = novos.map(function(d){ const r={...d}; delete r._segware_id; return r; });
+      for (let i=0; i<paraInserir.length; i+=200) {
+        const { error } = await supabase.from("dispatches").insert(paraInserir.slice(i,i+200));
+        if (error) return { novos:0, erro:error.message };
+      }
+    }
+    try { localStorage.setItem(SEG_CACHE_KEY, new Date().toISOString()); } catch {}
+    return { novos:novos.length, total:todos.length, erro:null };
+  } catch(e) { return { novos:0, erro:e.message }; }
+}
+
+function getUltimaSyncSegware() {
+  try { const ts=localStorage.getItem(SEG_CACHE_KEY); return ts ? new Date(ts) : null; } catch { return null; }
+}
+// ═══════════════════════════════════════════════════════════════
+
 
 function formatCurrency(v) {
   return new Intl.NumberFormat("pt-BR",{style:"currency",currency:"BRL",minimumFractionDigits:0}).format(v||0);
@@ -3917,6 +4016,12 @@ function App() {
   const [confirmLimparDesl,setConfirmLimparDesl]=useState(false);const [confirmLimparTudo,setConfirmLimparTudo]=useState(false);
   // -- SEGURANÇA: texto de confirmação para ações destrutivas --
   const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");
+  // -- SEGWARE: estados de sincronização automática --
+  const [segSyncStatus,setSegSyncStatus]=useState("idle"); // idle | syncing | ok | erro
+  const [segSyncMsg,setSegSyncMsg]=useState("");
+  const [segUltimaSync,setSegUltimaSync]=useState(()=>getUltimaSyncSegware());
+  const [segAutoMin,setSegAutoMin]=useState(15); // intervalo em minutos
+  const [segFilial,setSegFilial]=useState("SEGWARE"); // filial padrão para novos registros
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
@@ -3957,6 +4062,50 @@ function App() {
       if(event==="USER_UPDATED"&&!session){setUsuario(null);setClients([]);setDispatches([]);}
     });
     return()=>subscription.unsubscribe();
+
+  // -- SEGWARE: sincronização automática por intervalo --
+  const segSyncRef = useRef(null);
+
+  async function executarSyncSegware() {
+    if (!getSegwareToken()) {
+      setSegSyncStatus("erro");
+      setSegSyncMsg("Token Segware não configurado no config.js");
+      return;
+    }
+    setSegSyncStatus("syncing");
+    setSegSyncMsg("Buscando deslocamentos na Segware…");
+    const result = await sincronizarSegware(supabaseClient, segFilial, 30);
+    if (result.erro) {
+      setSegSyncStatus("erro");
+      setSegSyncMsg("Erro: " + result.erro);
+    } else {
+      setSegSyncStatus("ok");
+      const ts = getUltimaSyncSegware();
+      setSegUltimaSync(ts);
+      setSegSyncMsg(
+        result.novos > 0
+          ? "✅ " + result.novos + " novos deslocamentos importados!"
+          : "✅ Sincronizado — nenhum dado novo (total analisado: " + (result.total||0) + ")"
+      );
+      if (result.novos > 0) {
+        try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+        await carregarDados(true);
+      }
+    }
+    setTimeout(() => setSegSyncStatus(s => s==="ok"?"idle":s), 8000);
+  }
+
+  useEffect(() => {
+    if (!getSegwareToken()) return;
+    // Limpa intervalo anterior se existir
+    if (segSyncRef.current) clearInterval(segSyncRef.current);
+    const ms = Math.max(1, segAutoMin) * 60 * 1000;
+    segSyncRef.current = setInterval(() => {
+      executarSyncSegware();
+    }, ms);
+    return () => { if (segSyncRef.current) clearInterval(segSyncRef.current); };
+  }, [segAutoMin, segFilial]);
+
   },[]);
 
   // -- UX: atalhos de teclado para navegar entre abas (Alt+1 a Alt+7) --
@@ -4192,6 +4341,14 @@ function App() {
         </div>
         <div className="dash-header-actions" style={{ display:"flex",alignItems:"center",gap:12 }}>
           {lastUpdated&&<div style={{ textAlign:"right" }}><div style={{ fontSize:10,color:"rgba(255,255,255,0.2)",textTransform:"uppercase",letterSpacing:"0.08em" }}>Última importação</div><div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",fontWeight:600 }}>{lastUpdated}</div></div>}
+          {getSegwareToken()&&(
+            <div style={{ textAlign:"right",cursor:"pointer" }} onClick={()=>setAba("importacao")} title="Segware — clique para ver integração">
+              <div style={{ fontSize:10,color:"rgba(255,255,255,0.2)",textTransform:"uppercase",letterSpacing:"0.08em" }}>Segware</div>
+              <div style={{ fontSize:12,fontWeight:600,color: segSyncStatus==="syncing"?"#fbbf24": segSyncStatus==="erro"?"#f87171":"#34d399" }}>
+                {segSyncStatus==="syncing"?"Sync...": segSyncStatus==="erro"?"Erro": segUltimaSync ? "Segware "+segUltimaSync.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"}) : "Segware OK"}
+              </div>
+            </div>
+          )}
           <button onClick={()=>setBuscaGlobalAberta(true)} title="Busca global (Ctrl+K)" style={{ display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderRadius:9,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.4)",fontSize:12,cursor:"pointer",transition:"all 0.15s" }} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(56,189,248,0.4)";e.currentTarget.style.color="#38bdf8";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.1)";e.currentTarget.style.color="rgba(255,255,255,0.4)";}}>🔍 <span style={{ fontSize:10 }}>Ctrl+K</span></button>
           <button onClick={()=>window.print()} title="Imprimir / Exportar PDF" className="no-print" style={{ width:34,height:34,borderRadius:9,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.45)",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s" }} onMouseEnter={e=>{e.currentTarget.style.borderColor="rgba(251,146,60,0.5)";e.currentTarget.style.color="#fb923c";}} onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.1)";e.currentTarget.style.color="rgba(255,255,255,0.45)";}}>🖨</button>
           <button onClick={()=>carregarDados(true)} disabled={loadingData} title="Atualizar dados (forçar recarga)" style={{ width:34,height:34,borderRadius:9,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:loadingData?"rgba(255,255,255,0.2)":"rgba(255,255,255,0.45)",fontSize:15,cursor:loadingData?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",flexShrink:0 }} onMouseEnter={e=>{if(!loadingData){e.currentTarget.style.borderColor="rgba(56,189,248,0.5)";e.currentTarget.style.color="#38bdf8";}}} onMouseLeave={e=>{e.currentTarget.style.borderColor="rgba(255,255,255,0.1)";e.currentTarget.style.color="rgba(255,255,255,0.45)";}}> ↺ </button>
@@ -4253,6 +4410,81 @@ function App() {
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} />}
+      {aba==="importacao"&&isAdmin&&(
+        <div style={{ marginTop:20, background:"rgba(56,189,248,0.04)", border:"1px solid rgba(56,189,248,0.18)", borderRadius:16, padding:24 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18 }}>
+            <span style={{ fontSize:20 }}>🔗</span>
+            <div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#38bdf8" }}>Integração Segware</div>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.4)" }}>Sincroniza deslocamentos (status 2,3,4,7) automaticamente</div>
+            </div>
+            {segSyncStatus==="syncing" && <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#fbbf24" }}><div style={{ width:10,height:10,borderRadius:"50%",background:"#fbbf24",animation:"pulse 1s infinite" }}/> Sincronizando…</div>}
+            {segSyncStatus==="ok" && <div style={{ marginLeft:"auto", fontSize:11, color:"#34d399" }}>✅ OK</div>}
+            {segSyncStatus==="erro" && <div style={{ marginLeft:"auto", fontSize:11, color:"#f87171" }}>⚠️ Erro</div>}
+          </div>
+
+          {/* Status / mensagem */}
+          {segSyncMsg && (
+            <div style={{ marginBottom:14, padding:"8px 14px", borderRadius:10, background: segSyncStatus==="erro" ? "rgba(239,68,68,0.1)" : "rgba(52,211,153,0.08)", border: "1px solid " + (segSyncStatus==="erro" ? "rgba(239,68,68,0.3)" : "rgba(52,211,153,0.2)"), fontSize:12, color: segSyncStatus==="erro" ? "#f87171" : "#34d399" }}>
+              {segSyncMsg}
+            </div>
+          )}
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
+            {/* Filial padrão */}
+            <div>
+              <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Filial padrão para novos registros</label>
+              <input
+                value={segFilial}
+                onChange={e=>setSegFilial(e.target.value)}
+                placeholder="Ex: SERVIS CEARÁ"
+                style={{ width:"100%", padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none", boxSizing:"border-box" }}
+              />
+            </div>
+            {/* Intervalo automático */}
+            <div>
+              <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Atualizar automaticamente a cada</label>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <input
+                  type="number" min="1" max="1440"
+                  value={segAutoMin}
+                  onChange={e=>setSegAutoMin(Math.max(1,parseInt(e.target.value)||15))}
+                  style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none" }}
+                />
+                <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)" }}>minutos</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Token status */}
+          <div style={{ marginBottom:16, padding:"8px 14px", borderRadius:10, background: getSegwareToken() ? "rgba(52,211,153,0.06)" : "rgba(239,68,68,0.08)", border:"1px solid " + (getSegwareToken() ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.25)"), fontSize:12, color: getSegwareToken() ? "#34d399" : "#f87171" }}>
+            {getSegwareToken()
+              ? "Token Segware configurado no config.js ✓"
+              : "Token nao encontrado - adicione window._SEGWARE_TOKEN no config.js"}
+          </div>
+
+          {/* Última sincronização */}
+          {segUltimaSync && (
+            <div style={{ marginBottom:16, fontSize:11, color:"rgba(255,255,255,0.35)" }}>
+              Última sincronização: {segUltimaSync.toLocaleString("pt-BR")}
+            </div>
+          )}
+
+          {/* Botões */}
+          <div style={{ display:"flex", gap:10 }}>
+            <button
+              onClick={executarSyncSegware}
+              disabled={segSyncStatus==="syncing" || !getSegwareToken()}
+              style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1px solid rgba(56,189,248,0.4)", background: segSyncStatus==="syncing"||!getSegwareToken() ? "rgba(56,189,248,0.05)" : "rgba(56,189,248,0.12)", color: segSyncStatus==="syncing"||!getSegwareToken() ? "rgba(56,189,248,0.4)" : "#38bdf8", fontSize:13, fontWeight:600, cursor: segSyncStatus==="syncing"||!getSegwareToken() ? "not-allowed" : "pointer" }}
+            >
+              {segSyncStatus==="syncing" ? "Sincronizando..." : "Sincronizar Agora"}
+            </button>
+          </div>
+          <div style={{ marginTop:10, fontSize:10, color:"rgba(255,255,255,0.2)", lineHeight:1.5 }}>
+            Busca os últimos 30 dias na API Segware · Filtra status DISPLACEMENT (2), DISPLACEMENT_STARTED (3), IN_PLACE (4), IN_PLACE_DONE (7) · Evita duplicatas automaticamente
+          </div>
+        </div>
+      )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
