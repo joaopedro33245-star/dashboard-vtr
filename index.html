@@ -1,5 +1,6 @@
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -22,9 +23,27 @@
     // (api/config.js no Vercel) — veja vercel.json
     // ═══════════════════════════════════════════════════════════
   </script>
-  <script src="/config.js"></script>
   <script>
+    // Carrega config.js de forma sincrona via XMLHttpRequest
+    // garantindo que as variaveis estejam disponiveis antes do Supabase inicializar
     (function() {
+      try {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", "/config.js", false); // false = sincrono
+        xhr.send(null);
+        if (xhr.status === 200) {
+          eval(xhr.responseText);
+        } else {
+          window._configMissing = true;
+          window._supabaseReady = false;
+          console.error("config.js retornou status " + xhr.status);
+        }
+      } catch(e) {
+        window._configMissing = true;
+        window._supabaseReady = false;
+        console.error("Erro ao carregar config.js:", e);
+      }
+
       var url  = window._SUPABASE_URL;
       var anon = window._SUPABASE_ANON;
       if (!url || !anon || url.includes("SEU-PROJETO")) {
