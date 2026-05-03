@@ -3072,21 +3072,28 @@ function AreaImport({ clients, supabaseClient, onRefresh }) {
         const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
         // Extrai área + nome do relatório
+        // O XLSX usa a linha 1 como cabeçalho (col 0="10", col 1="Servis...", etc)
+        // Estrutura real: col[0]=N.Interno, col[1]=Data, col[2]=Cód.Cli, col[3]=Nome
         let areaAtual = "";
         const mapa = {}; // nome_upper -> area
         for (const r of rows) {
           const vals = Object.values(r);
           const colA = String(vals[0] || "").trim();
+          // Linha de área: "F - NOME DO SUPERVISOR"
           const areaMatch = colA.match(/^([A-Z])\s*[-–]\s*(.+)$/);
           if (areaMatch && !/^\d/.test(colA)) {
             areaAtual = areaMatch[1].toUpperCase();
             continue;
           }
-          // Linha de cliente: col[0]=N.Interno(int), col[2]=Cód.Cli, col[3]=Nome
-          const nomeRel = r["Cliente"] || r["cliente"] || vals[3];
-          if (nomeRel && typeof vals[0] === "number" && vals[0] > 0 && areaAtual) {
-            const nomeUp = String(nomeRel).trim().toUpperCase();
-            if (!mapa[nomeUp]) mapa[nomeUp] = areaAtual;
+          // Linha de cliente: col[0] é número (N.Interno), col[3] é o nome
+          const col0 = vals[0];
+          const col3 = vals[3];
+          const isNumerico = col0 !== null && col0 !== undefined && col0 !== "" && !isNaN(Number(col0)) && Number(col0) > 0;
+          if (isNumerico && col3 && areaAtual) {
+            const nomeUp = String(col3).trim().toUpperCase();
+            if (nomeUp.length > 3 && !nomeUp.includes("INTERNO") && !nomeUp.includes("CLIENTE")) {
+              if (!mapa[nomeUp]) mapa[nomeUp] = areaAtual;
+            }
           }
         }
 
