@@ -10,17 +10,22 @@ export default async function handler(req, res) {
 
   const token = process.env.SEGWARE_TOKEN;
   if (!token) {
-    return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado" });
+    return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado nas variáveis de ambiente" });
   }
 
-  const tokenLimpo = token.replace(/[\r\n]+/g, '').trim();
+  // Limpa quebras de linha e espaços extras
+  const tokenLimpo = token.replace(/[\r\n\t]+/g, '').trim();
+  
+  // Garante que começa com "Bearer "
+  const tokenFinal = tokenLimpo.startsWith('Bearer ') ? tokenLimpo : 'Bearer ' + tokenLimpo;
+
   const url = `https://api.segware.com.br/v1/occurrences?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
 
   try {
     const resp = await fetch(url, {
       method: "GET",
       headers: {
-        "Authorization": tokenLimpo,
+        "Authorization": tokenFinal,
         "Content-Type": "application/json",
         "Accept": "application/json"
       }
@@ -35,7 +40,8 @@ export default async function handler(req, res) {
       return res.status(resp.status).json({
         error: `Status ${resp.status} — resposta não-JSON`,
         body: text.slice(0, 300),
-        url_chamada: url
+        url_chamada: url,
+        token_inicio: tokenFinal.substring(0, 20) + "..."
       });
     }
   } catch (e) {
