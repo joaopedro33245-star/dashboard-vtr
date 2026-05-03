@@ -1,5 +1,4 @@
 export default async function handler(req, res) {
-  // Permite apenas GET
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -9,9 +8,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "startDate e endDate são obrigatórios" });
   }
 
+  // A variável SEGWARE_TOKEN no Vercel já inclui "Bearer eyJ..."
   const token = process.env.SEGWARE_TOKEN;
   if (!token) {
-    return res.status(500).json({ error: "SEGWARE_TOKEN não configurado nas variáveis de ambiente do Vercel" });
+    return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado nas variáveis de ambiente do Vercel" });
   }
 
   const url = `https://api.segware.com.br/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
@@ -21,13 +21,25 @@ export default async function handler(req, res) {
       method: "GET",
       headers: {
         "Authorization": token,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
       }
     });
 
-    const data = await resp.json();
-    res.status(resp.status).json(data);
+    const text = await resp.text();
+
+    // Verifica se é JSON válido
+    try {
+      const data = JSON.parse(text);
+      return res.status(resp.status).json(data);
+    } catch {
+      // Retorna detalhes para diagnóstico
+      return res.status(resp.status).json({
+        error: `Segware retornou status ${resp.status} com resposta não-JSON`,
+        body: text.slice(0, 500)
+      });
+    }
   } catch (e) {
-    res.status(500).json({ error: "Erro ao chamar API Segware: " + e.message });
+    return res.status(500).json({ error: "Erro ao chamar API Segware: " + e.message });
   }
 }
