@@ -14,9 +14,7 @@ export default async function handler(req, res) {
   }
 
   const tokenLimpo = token.replace(/[\r\n]+/g, '').trim();
-
-  // O Swagger mostra params como objeto query — formato correto para Spring Boot
-  const url = `https://api.segware.com.br/v1/occurrences?params.startDate=${encodeURIComponent(startDate)}&params.endDate=${encodeURIComponent(endDate)}`;
+  const url = `https://api.segware.com.br/v1/occurrences?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
 
   try {
     const resp = await fetch(url, {
