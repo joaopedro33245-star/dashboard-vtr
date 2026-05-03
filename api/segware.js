@@ -13,15 +13,10 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado" });
   }
 
-  // Remove quebras de linha e espaços extras do token
   const tokenLimpo = token.replace(/[\r\n]+/g, '').trim();
 
-  // Endpoint correto: /v1/events com params como query object
-  const params = new URLSearchParams();
-  params.append("params[startDate]", startDate);
-  params.append("params[endDate]", endDate);
-
-  const url = `https://api.segware.com.br/v1/events?${params.toString()}`;
+  // Passa startDate e endDate direto como query params simples
+  const url = `https://api.segware.com.br/v1/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
 
   try {
     const resp = await fetch(url, {
@@ -41,7 +36,7 @@ export default async function handler(req, res) {
     } catch {
       return res.status(resp.status).json({
         error: `Status ${resp.status} — resposta não-JSON`,
-        body: text.slice(0, 500),
+        body: text.slice(0, 300),
         url_chamada: url
       });
     }
