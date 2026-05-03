@@ -3051,6 +3051,169 @@ function MensalidadesPadraoCard({ clients, supabaseClient, onRefresh }) {
   );
 }
 
+
+// ── Importação de Áreas por Nome ──
+function AreaImport({ clients, supabaseClient, onRefresh }) {
+  const fileRef = useRef();
+  const [preview, setPreview] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [erro, setErro] = useState("");
+  const [msg, setMsg] = useState("");
+  const [aplicando, setAplicando] = useState(false);
+
+  function handleFile(e) {
+    const file = e.target.files[0]; if (!file) return;
+    setErro(""); setFileName(file.name); setPreview(null);
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const wb = XLSX.read(ev.target.result, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+        // Extrai área + nome do relatório
+        let areaAtual = "";
+        const mapa = {}; // nome_upper -> area
+        for (const r of rows) {
+          const vals = Object.values(r);
+          const colA = String(vals[0] || "").trim();
+          const areaMatch = colA.match(/^([A-Z])\s*[-–]\s*(.+)$/);
+          if (areaMatch && !/^\d/.test(colA)) {
+            areaAtual = areaMatch[1].toUpperCase();
+            continue;
+          }
+          // Linha de cliente: col[0]=N.Interno(int), col[2]=Cód.Cli, col[3]=Nome
+          const nomeRel = r["Cliente"] || r["cliente"] || vals[3];
+          if (nomeRel && typeof vals[0] === "number" && vals[0] > 0 && areaAtual) {
+            const nomeUp = String(nomeRel).trim().toUpperCase();
+            if (!mapa[nomeUp]) mapa[nomeUp] = areaAtual;
+          }
+        }
+
+        if (Object.keys(mapa).length === 0) {
+          setErro("Nenhum cliente encontrado no relatório.");
+          return;
+        }
+
+        // Cruza com os clientes do banco pelo nome
+        const matches = [];
+        const semMatch = [];
+        for (const [nomeUp, area] of Object.entries(mapa)) {
+          // Busca por correspondência exata ou parcial no nome do cliente
+          const found = clients.filter(c => {
+            const cn = (c.nome_cliente || "").trim().toUpperCase();
+            return cn === nomeUp || cn.includes(nomeUp) || nomeUp.includes(cn);
+          });
+          if (found.length > 0) {
+            for (const c of found) {
+              matches.push({ ...c, area_nova: area, nome_relatorio: nomeUp });
+            }
+          } else {
+            semMatch.push({ nome: nomeUp, area });
+          }
+        }
+
+        setPreview({ matches, semMatch, total: Object.keys(mapa).length });
+      } catch (err) {
+        setErro("Erro ao ler arquivo: " + err.message);
+      }
+    };
+    reader.readAsBinaryString(file);
+  }
+
+  async function aplicar() {
+    if (!preview || preview.matches.length === 0) return;
+    setAplicando(true);
+    setMsg("Aplicando áreas...");
+    let ok = 0;
+    // Agrupa por area para fazer updates em lote
+    for (let i = 0; i < preview.matches.length; i += 100) {
+      const lote = preview.matches.slice(i, i + 100);
+      for (const c of lote) {
+        const q = supabaseClient.from("clients").update({ area: c.area_nova });
+        if (c.id) {
+          await q.eq("id", c.id);
+        } else {
+          await q.eq("codigo_cliente", c.codigo_cliente).eq("filial", c.filial);
+        }
+        ok++;
+      }
+    }
+    setAplicando(false);
+    setMsg("✅ " + ok + " clientes com área atualizada!");
+    setPreview(null);
+    setFileName("");
+    if (fileRef.current) fileRef.current.value = "";
+    setTimeout(() => setMsg(""), 5000);
+    await onRefresh();
+  }
+
+  return (
+    <div style={{ borderRadius:16, border:"1px solid rgba(251,146,60,0.2)", background:"rgba(251,146,60,0.03)", padding:24, marginBottom:20 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+        <div style={{ width:40, height:40, borderRadius:10, background:"rgba(251,146,60,0.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🗂</div>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color:"#fb923c" }}>Importar Áreas por Nome</div>
+          <div style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
+            Usa o Relatório de Clientes por Área · cruza pelo nome do cliente
+          </div>
+        </div>
+      </div>
+      {msg && <div style={{ marginBottom:12, padding:"8px 14px", borderRadius:10, background: msg.startsWith("✅") ? "rgba(52,211,153,0.08)" : "rgba(239,68,68,0.08)", border:"1px solid " + (msg.startsWith("✅") ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.3)"), fontSize:12, color: msg.startsWith("✅") ? "#34d399" : "#f87171" }}>{msg}</div>}
+      <DropZone color="#fb923c" fileName={fileName} inputRef={fileRef} onChange={handleFile} label="Selecione o Relatório de Clientes por Área (.xlsx)" />
+      {erro && <div style={{ marginTop:8, padding:"8px 14px", borderRadius:8, background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", color:"#f87171", fontSize:12 }}>⚠️ {erro}</div>}
+      {preview && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ display:"flex", gap:12, marginBottom:12, flexWrap:"wrap" }}>
+            <div style={{ padding:"8px 14px", borderRadius:10, background:"rgba(52,211,153,0.08)", border:"1px solid rgba(52,211,153,0.2)", fontSize:12, color:"#34d399", fontWeight:600 }}>
+              ✅ {preview.matches.length} clientes com área encontrada
+            </div>
+            {preview.semMatch.length > 0 && (
+              <div style={{ padding:"8px 14px", borderRadius:10, background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", fontSize:12, color:"#fbbf24", fontWeight:600 }}>
+                ⚠️ {preview.semMatch.length} sem correspondência no banco
+              </div>
+            )}
+          </div>
+          {/* Preview dos primeiros matches */}
+          <div style={{ overflowX:"auto", borderRadius:10, border:"1px solid rgba(255,255,255,0.07)", marginBottom:12, maxHeight:240, overflowY:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+              <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>
+                {["Área", "Nome no Banco", "Código", "Filial"].map(h => (
+                  <th key={h} style={{ padding:"8px 12px", textAlign:"left", color:"rgba(255,255,255,0.3)", fontSize:10, textTransform:"uppercase" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {preview.matches.slice(0, 10).map((c, i) => (
+                  <tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding:"8px 12px" }}>
+                      <span style={{ fontWeight:800, fontSize:14, color:"#fb923c" }}>{c.area_nova}</span>
+                    </td>
+                    <td style={{ padding:"8px 12px", color:"#fff" }}>{c.nome_cliente}</td>
+                    <td style={{ padding:"8px 12px", color:"rgba(255,255,255,0.4)", fontFamily:"monospace" }}>{c.codigo_cliente}</td>
+                    <td style={{ padding:"8px 12px", color:"rgba(255,255,255,0.4)" }}>{c.filial}</td>
+                  </tr>
+                ))}
+                {preview.matches.length > 10 && (
+                  <tr><td colSpan={4} style={{ padding:"8px 12px", color:"rgba(255,255,255,0.25)", textAlign:"center", fontSize:11 }}>+{preview.matches.length - 10} clientes adicionais</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={aplicar} disabled={aplicando} style={{ flex:1, padding:10, borderRadius:10, border:"none", background:"#fb923c", color:"#0a0f1a", fontWeight:700, fontSize:13, cursor:"pointer", opacity:aplicando?0.6:1 }}>
+              {aplicando ? "Aplicando..." : `✅ Aplicar áreas em ${preview.matches.length} clientes`}
+            </button>
+            <button onClick={() => { setPreview(null); setFileName(""); if (fileRef.current) fileRef.current.value = ""; }}
+              style={{ padding:"10px 16px", borderRadius:10, border:"1px solid rgba(255,255,255,0.1)", background:"transparent", color:"rgba(255,255,255,0.4)", fontSize:13, cursor:"pointer" }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, supabaseClient, onRefresh }) {
   const clientRef=useRef();const dispatchRef=useRef();
   const [clientPreview,setClientPreview]=useState(null);const [dispatchPreview,setDispatchPreview]=useState(null);
@@ -3257,6 +3420,9 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         )}
       </div>
+      {/* ── Importação de Áreas por Nome ── */}
+      <AreaImport clients={clients} supabaseClient={supabaseClient} onRefresh={onRefresh} />
+
       {/* ── Importação de Clientes Portaria Inteligente ── */}
       <div style={{ borderRadius:16,border:"1px solid rgba(167,139,250,0.2)",background:"rgba(167,139,250,0.04)",padding:24,marginBottom:20 }}>
         <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:16 }}>
