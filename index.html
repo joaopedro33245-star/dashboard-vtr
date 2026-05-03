@@ -185,8 +185,7 @@ async function fetchSegwareWindow(dataInicio, dataFim) {
   if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
   const json = await resp.json();
   if (json.error) throw new Error("Segware erro: " + json.error);
-  const lista = Array.isArray(json) ? json : (json.data || json.content || json.results || []);
-  // Filtra pelo último status da ocorrência (2=Deslocamento, 3=Desl.Iniciado, 4=No Local, 7=Concluído VTR)
+  const lista = Array.isArray(json) ? json : (json.data || json.content || json.results || json.events || []);
   return lista.filter(ev => {
     const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
     const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
@@ -196,8 +195,7 @@ async function fetchSegwareWindow(dataInicio, dataFim) {
 }
 
 function segwareToDispatch(ev, filialPadrao) {
-  // Estrutura do /v1/occurrences:
-  // accountCode, clientName, clientId, startDate, description, statuses[], patrolCarLicencePlate
+  // Estrutura do /v1/occurrences: accountCode, clientName, startDate, statuses[], patrolCarLicencePlate
   const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
   const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
   const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0);
@@ -205,14 +203,9 @@ function segwareToDispatch(ev, filialPadrao) {
   const dataHora = rawDate ? new Date(rawDate).toLocaleString("pt-BR") : "";
   const codCliente = String(ev.accountCode || ev.clientCode || String(ev.accountId||"") || String(ev.clientId||"") || "SEM-COD").trim();
   const nomeCliente = String(ev.clientName || ev.tradeName || codCliente).trim();
-  const filial = String(ev.companyName || ev.monitoringCenter || filialPadrao || "SEGWARE").trim();
-  const evento = "[Segware] "+labelStatus(Number(cod))+" — "+( ev.description || "Ocorrência #"+(ev.id||"?") );
-  // Viatura: placa do carro patrulha
-  const viatura = String(
-    (ult && ult.patrolCarLicencePlate) ||
-    ev.patrolCarDescription ||
-    ev.vehiclePlate || ""
-  ).trim();
+  const filial = String(ev.monitoringCenter || ev.companyName || filialPadrao || "SEGWARE").trim();
+  const evento = "[Segware] "+labelStatus(Number(cod))+" — "+(ev.description || "Ocorrência #"+(ev.id||"?"));
+  const viatura = String((ult && ult.patrolCarLicencePlate) || ev.patrolCarDescription || "").trim();
   return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||"") };
 }
 
@@ -226,7 +219,8 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
     const janelas = [];
     let cur = new Date(inicio);
     while (cur < agora) {
-      const fim = new Date(Math.min(cur.getTime() + 30*86400000, agora.getTime()));
+      // Janelas de 2 horas para respeitar limite de 30k registros da Segware
+      const fim = new Date(Math.min(cur.getTime() + 2*3600000, agora.getTime()));
       janelas.push({ inicio: new Date(cur), fim });
       cur = new Date(fim.getTime() + 1000);
     }
