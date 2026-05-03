@@ -3,32 +3,25 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const token = process.env.SEGWARE_TOKEN;
-
-  // Debug: mostra o início do token para confirmar se está chegando
-  const tokenPreview = token 
-    ? token.substring(0, 30) + "..." 
-    : "NÃO ENCONTRADO";
-
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
-    return res.status(400).json({ 
-      error: "startDate e endDate são obrigatórios",
-      token_preview: tokenPreview
-    });
+    return res.status(400).json({ error: "startDate e endDate são obrigatórios" });
   }
 
+  const token = process.env.SEGWARE_TOKEN;
   if (!token) {
-    return res.status(500).json({ 
-      error: "SEGWARE_TOKEN não encontrado",
-      token_preview: tokenPreview
-    });
+    return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado" });
   }
 
-  // Remove qualquer quebra de linha ou espaço extra do token
-  const tokenLimpo = token.replace(/[\r\n\s]+/g, ' ').trim();
+  // Remove quebras de linha e espaços extras do token
+  const tokenLimpo = token.replace(/[\r\n]+/g, '').trim();
 
-  const url = `https://api.segware.com.br/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&page=0&size=1000`;
+  // Endpoint correto: /v1/events com params como query object
+  const params = new URLSearchParams();
+  params.append("params[startDate]", startDate);
+  params.append("params[endDate]", endDate);
+
+  const url = `https://api.segware.com.br/v1/events?${params.toString()}`;
 
   try {
     const resp = await fetch(url, {
@@ -49,14 +42,10 @@ export default async function handler(req, res) {
       return res.status(resp.status).json({
         error: `Status ${resp.status} — resposta não-JSON`,
         body: text.slice(0, 500),
-        token_preview: tokenPreview,
         url_chamada: url
       });
     }
   } catch (e) {
-    return res.status(500).json({ 
-      error: "Erro: " + e.message,
-      token_preview: tokenPreview
-    });
+    return res.status(500).json({ error: "Erro: " + e.message });
   }
 }
