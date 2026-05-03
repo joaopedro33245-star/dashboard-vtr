@@ -180,12 +180,13 @@ function labelStatus(code) {
 }
 
 async function fetchSegwareWindow(dataInicio, dataFim) {
+  const token = getSegwareToken();
+  if (!token) throw new Error("Token Segware não configurado. Adicione window._SEGWARE_TOKEN no config.js");
   const url = SEGWARE_API+"?startDate="+fmtSegDate(dataInicio)+"&endDate="+fmtSegDate(dataFim);
-  const resp = await fetch(url, { method:"GET" });
+  const resp = await fetch(url, { method:"GET", headers:{"Authorization":token,"Content-Type":"application/json"} });
   if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
   const json = await resp.json();
-  if (json.error) throw new Error("Segware erro: " + json.error);
-  const lista = Array.isArray(json) ? json : (json.data || json.content || json.results || json.events || []);
+  const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || []);
   return lista.filter(ev => {
     const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
     const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
@@ -195,18 +196,17 @@ async function fetchSegwareWindow(dataInicio, dataFim) {
 }
 
 function segwareToDispatch(ev, filialPadrao) {
-  // Estrutura do /v1/occurrences: accountCode, clientName, startDate, statuses[], patrolCarLicencePlate
   const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
   const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
   const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0);
-  const rawDate = ev.startDate || ev.openedAt || ev.createdAt || ev.date || "";
+  const rawDate = ev.openedAt || ev.createdAt || ev.date || ev.dataHora || ev.datetime || "";
   const dataHora = rawDate ? new Date(rawDate).toLocaleString("pt-BR") : "";
-  const codCliente = String(ev.accountCode || ev.clientCode || String(ev.accountId||"") || String(ev.clientId||"") || "SEM-COD").trim();
-  const nomeCliente = String(ev.clientName || ev.tradeName || codCliente).trim();
-  const filial = String(ev.monitoringCenter || ev.companyName || filialPadrao || "SEGWARE").trim();
-  const evento = "[Segware] "+labelStatus(Number(cod))+" — "+(ev.description || "Ocorrência #"+(ev.id||"?"));
-  const viatura = String((ult && ult.patrolCarLicencePlate) || ev.patrolCarDescription || "").trim();
-  return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||"") };
+  const codCliente = String(ev.clientCode || ev.clientId || ev.codigoCliente || (ev.client && ev.client.code) || "SEM-COD").trim();
+  const nomeCliente = String(ev.clientName || (ev.client && ev.client.name) || ev.nomeCliente || codCliente).trim();
+  const filial = String(ev.monitoringCenter || ev.filial || ev.branch || filialPadrao || "SEGWARE").trim();
+  const evento = "[Segware] "+labelStatus(Number(cod))+" — Ocorrência #"+(ev.id || ev.occurrenceId || "?");
+  const viatura = String(ev.vehiclePlate || (ev.vehicle && ev.vehicle.plate) || ev.viatura || "").trim();
+  return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||ev.occurrenceId||"") };
 }
 
 async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
@@ -219,8 +219,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
     const janelas = [];
     let cur = new Date(inicio);
     while (cur < agora) {
-      // Janelas de 2 horas para respeitar limite de 30k registros da Segware
-      const fim = new Date(Math.min(cur.getTime() + 2*3600000, agora.getTime()));
+      const fim = new Date(Math.min(cur.getTime() + 30*86400000, agora.getTime()));
       janelas.push({ inicio: new Date(cur), fim });
       cur = new Date(fim.getTime() + 1000);
     }
@@ -3073,24 +3072,35 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
       let areaAtual="";let coordAtual="";
       const mapped=[];
       for(const r of rows){
-        const colA=String(r["Conta"]||r["conta"]||r["CONTA"]||Object.values(r)[0]||"").trim();
-        // Linha de área: começa com letra única + " - " + nome
+        const vals=Object.values(r);
+        const colA=String(r["Conta"]||r["conta"]||r["CONTA"]||vals[0]||"").trim();
+        // Linha de área: começa com letra única + " - " + nome (ex: "F - LUCAS PABLO")
         const areaMatch=colA.match(/^([A-Z])\s*[-–]\s*(.+)$/);
         if(areaMatch&&!colA.match(/^\d/)){
           areaAtual=areaMatch[1].toUpperCase();
           coordAtual="";
           continue;
         }
+        // -- Formato padrão (Conta, Fantasia, Empresa) --
+        let codigo=String(r["Conta"]||r["conta"]||r["CONTA"]||"").trim();
+        let nome=limparFantasia(String(r["Fantasia (Razão Social)"]||r["Fantasia"]||r["Razão Social"]||r["fantasia"]||""));
         const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"");
         const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"");
         const bairroRaw=String(r["Bairro"]||r["bairro"]||r["BAIRRO"]||r["Bairro/Distrito"]||r["bairro_distrito"]||"");
-        const codigo=String(r["Conta"]||r["conta"]||r["CONTA"]||"").trim();
-        const nome=limparFantasia(String(r["Fantasia (Razão Social)"]||r["Fantasia"]||r["Razão Social"]||r["fantasia"]||""));
+        // -- Formato relatório de área (N. Interno, Dt. Emis., Cód. Cli., Cliente) --
+        if(!codigo&&!nome){
+          const codCli=r["Cód. Cli."]||r["Cod. Cli."]||r["CÓD. CLI."]||r["COD. CLI."]||vals[2];
+          const nomeRel=r["Cliente"]||r["cliente"]||vals[3];
+          if(codCli&&nomeRel&&typeof vals[0]==="number"&&vals[0]>0){
+            codigo=String(Math.round(Number(codCli)));
+            nome=limparFantasia(String(nomeRel));
+          }
+        }
         if(!codigo||!nome)continue;
         mapped.push({
           codigo_cliente:codigo,
           nome_cliente:nome,
-          filial:limparEmpresa(empresaRaw,cidadeRaw),
+          filial:limparEmpresa(empresaRaw,cidadeRaw)||"SERVIS CEARÁ",
           cidade:cidadeRaw.trim(),
           bairro:bairroRaw.trim(),
           area:areaAtual,
