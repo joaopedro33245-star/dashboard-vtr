@@ -3,31 +3,38 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const token = process.env.SEGWARE_TOKEN;
+
+  // Debug: mostra o início do token para confirmar se está chegando
+  const tokenPreview = token 
+    ? token.substring(0, 30) + "..." 
+    : "NÃO ENCONTRADO";
+
   const { startDate, endDate } = req.query;
   if (!startDate || !endDate) {
-    return res.status(400).json({ error: "startDate e endDate são obrigatórios" });
+    return res.status(400).json({ 
+      error: "startDate e endDate são obrigatórios",
+      token_preview: tokenPreview
+    });
   }
 
-  const token = process.env.SEGWARE_TOKEN;
   if (!token) {
-    return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado nas variáveis de ambiente do Vercel" });
+    return res.status(500).json({ 
+      error: "SEGWARE_TOKEN não encontrado",
+      token_preview: tokenPreview
+    });
   }
 
-  // Tenta os dois formatos de parâmetro que a Segware pode usar
-  const params = new URLSearchParams({
-    startDate: startDate,
-    endDate: endDate,
-    page: 0,
-    size: 1000
-  });
+  // Remove qualquer quebra de linha ou espaço extra do token
+  const tokenLimpo = token.replace(/[\r\n\s]+/g, ' ').trim();
 
-  const url = `https://api.segware.com.br/events?${params.toString()}`;
+  const url = `https://api.segware.com.br/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&page=0&size=1000`;
 
   try {
     const resp = await fetch(url, {
       method: "GET",
       headers: {
-        "Authorization": token,
+        "Authorization": tokenLimpo,
         "Content-Type": "application/json",
         "Accept": "application/json"
       }
@@ -35,18 +42,21 @@ export default async function handler(req, res) {
 
     const text = await resp.text();
 
-    // Verifica se é JSON válido
     try {
       const data = JSON.parse(text);
       return res.status(resp.status).json(data);
     } catch {
       return res.status(resp.status).json({
-        error: `Segware retornou status ${resp.status} com resposta não-JSON`,
-        body: text.slice(0, 1000),
+        error: `Status ${resp.status} — resposta não-JSON`,
+        body: text.slice(0, 500),
+        token_preview: tokenPreview,
         url_chamada: url
       });
     }
   } catch (e) {
-    return res.status(500).json({ error: "Erro ao chamar API Segware: " + e.message });
+    return res.status(500).json({ 
+      error: "Erro: " + e.message,
+      token_preview: tokenPreview
+    });
   }
 }
