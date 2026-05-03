@@ -1,6 +1,5 @@
 
 
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -23,27 +22,9 @@
     // (api/config.js no Vercel) — veja vercel.json
     // ═══════════════════════════════════════════════════════════
   </script>
+  <script src="/config.js"></script>
   <script>
-    // Carrega config.js de forma sincrona via XMLHttpRequest
-    // garantindo que as variaveis estejam disponiveis antes do Supabase inicializar
     (function() {
-      try {
-        var xhr = new XMLHttpRequest();
-        xhr.open("GET", "/config.js", false); // false = sincrono
-        xhr.send(null);
-        if (xhr.status === 200) {
-          eval(xhr.responseText);
-        } else {
-          window._configMissing = true;
-          window._supabaseReady = false;
-          console.error("config.js retornou status " + xhr.status);
-        }
-      } catch(e) {
-        window._configMissing = true;
-        window._supabaseReady = false;
-        console.error("Erro ao carregar config.js:", e);
-      }
-
       var url  = window._SUPABASE_URL;
       var anon = window._SUPABASE_ANON;
       if (!url || !anon || url.includes("SEU-PROJETO")) {
@@ -4063,26 +4044,6 @@ function App() {
     ? <span style={{ marginLeft:6,background:"rgba(56,189,248,0.2)",color:"#38bdf8",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{monthLabel(mesFiltroGlobal)}</span>
     : null;
 
-  useEffect(()=>{
-    supabaseClient.auth.getSession().then(async({data:{session},error})=>{
-      if(error){setErroGlobal("Erro ao verificar sessão. Verifique sua conexão.");setCheckingAuth(false);return;}
-      if(session?.user){
-        const{data:profile}=await supabaseClient.from("profiles").select("id,nome,perfil").eq("id",session.user.id).single();
-        setUsuario({...session.user,nome:profile?.nome||session.user.email,perfil:profile?.perfil||"viewer"});
-        await carregarDados();
-      }
-      setCheckingAuth(false);
-    });
-    const{data:{subscription}}=supabaseClient.auth.onAuthStateChange(async(event,session)=>{
-      if(event==="SIGNED_OUT"||event==="TOKEN_REFRESHED"&&!session){
-        setUsuario(null);setClients([]);setDispatches([]);
-      }
-      // Sessão expirada detectada pelo Supabase
-      if(event==="USER_UPDATED"&&!session){setUsuario(null);setClients([]);setDispatches([]);}
-    });
-    return()=>subscription.unsubscribe();
-
-  // -- SEGWARE: sincronização automática por intervalo --
   const segSyncRef = useRef(null);
 
   async function executarSyncSegware() {
@@ -4116,7 +4077,6 @@ function App() {
 
   useEffect(() => {
     if (!getSegwareToken()) return;
-    // Limpa intervalo anterior se existir
     if (segSyncRef.current) clearInterval(segSyncRef.current);
     const ms = Math.max(1, segAutoMin) * 60 * 1000;
     segSyncRef.current = setInterval(() => {
@@ -4125,6 +4085,23 @@ function App() {
     return () => { if (segSyncRef.current) clearInterval(segSyncRef.current); };
   }, [segAutoMin, segFilial]);
 
+  useEffect(()=>{
+    supabaseClient.auth.getSession().then(async({data:{session},error})=>{
+      if(error){setErroGlobal("Erro ao verificar sessão. Verifique sua conexão.");setCheckingAuth(false);return;}
+      if(session?.user){
+        const{data:profile}=await supabaseClient.from("profiles").select("id,nome,perfil").eq("id",session.user.id).single();
+        setUsuario({...session.user,nome:profile?.nome||session.user.email,perfil:profile?.perfil||"viewer"});
+        await carregarDados();
+      }
+      setCheckingAuth(false);
+    });
+    const{data:{subscription}}=supabaseClient.auth.onAuthStateChange(async(event,session)=>{
+      if(event==="SIGNED_OUT"||event==="TOKEN_REFRESHED"&&!session){
+        setUsuario(null);setClients([]);setDispatches([]);
+      }
+      if(event==="USER_UPDATED"&&!session){setUsuario(null);setClients([]);setDispatches([]);}
+    });
+    return()=>subscription.unsubscribe();
   },[]);
 
   // -- UX: atalhos de teclado para navegar entre abas (Alt+1 a Alt+7) --
