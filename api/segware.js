@@ -8,13 +8,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "startDate e endDate são obrigatórios" });
   }
 
-  // A variável SEGWARE_TOKEN no Vercel já inclui "Bearer eyJ..."
   const token = process.env.SEGWARE_TOKEN;
   if (!token) {
     return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado nas variáveis de ambiente do Vercel" });
   }
 
-  const url = `https://api.segware.com.br/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+  // Tenta os dois formatos de parâmetro que a Segware pode usar
+  const params = new URLSearchParams({
+    startDate: startDate,
+    endDate: endDate,
+    page: 0,
+    size: 1000
+  });
+
+  const url = `https://api.segware.com.br/events?${params.toString()}`;
 
   try {
     const resp = await fetch(url, {
@@ -33,10 +40,10 @@ export default async function handler(req, res) {
       const data = JSON.parse(text);
       return res.status(resp.status).json(data);
     } catch {
-      // Retorna detalhes para diagnóstico
       return res.status(resp.status).json({
         error: `Segware retornou status ${resp.status} com resposta não-JSON`,
-        body: text.slice(0, 500)
+        body: text.slice(0, 1000),
+        url_chamada: url
       });
     }
   } catch (e) {
