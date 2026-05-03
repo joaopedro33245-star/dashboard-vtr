@@ -180,31 +180,25 @@ function labelStatus(code) {
 }
 
 async function fetchSegwareWindow(dataInicio, dataFim) {
-  const token = getSegwareToken();
-  if (!token) throw new Error("Token Segware não configurado. Adicione window._SEGWARE_TOKEN no config.js");
   const url = SEGWARE_API+"?startDate="+fmtSegDate(dataInicio)+"&endDate="+fmtSegDate(dataFim);
-  const resp = await fetch(url, { method:"GET", headers:{"Authorization":token,"Content-Type":"application/json"} });
+  const resp = await fetch(url, { method:"GET" });
   if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
   const json = await resp.json();
-  const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || []);
-  return lista.filter(ev => {
-    const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
-    const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
-    const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus);
-    return SEGWARE_STATUS.includes(Number(cod));
-  });
+  if (json.error) throw new Error("Segware erro: " + json.error + (json.body ? " — " + json.body.slice(0,100) : ""));
+  const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || json.content || []);
+  return lista;
 }
 
 function segwareToDispatch(ev, filialPadrao) {
-  const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
-  const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
-  const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0);
-  const rawDate = ev.openedAt || ev.createdAt || ev.date || ev.dataHora || ev.datetime || "";
+  // Estrutura do /v1/events da Segware:
+  // { id, occurrenceId, code, startDate, endDate, type, clientId, accountId, cuc, ... }
+  const rawDate = ev.startDate || ev.openedAt || ev.createdAt || ev.date || ev.dataHora || "";
   const dataHora = rawDate ? new Date(rawDate).toLocaleString("pt-BR") : "";
-  const codCliente = String(ev.clientCode || ev.clientId || ev.codigoCliente || (ev.client && ev.client.code) || "SEM-COD").trim();
+  const codCliente = String(ev.cuc || ev.accountId || ev.clientId || ev.clientCode || ev.codigoCliente || (ev.client && ev.client.code) || "SEM-COD").trim();
   const nomeCliente = String(ev.clientName || (ev.client && ev.client.name) || ev.nomeCliente || codCliente).trim();
   const filial = String(ev.monitoringCenter || ev.filial || ev.branch || filialPadrao || "SEGWARE").trim();
-  const evento = "[Segware] "+labelStatus(Number(cod))+" — Ocorrência #"+(ev.id || ev.occurrenceId || "?");
+  const tipoEvento = ev.code || ev.type || ev.eventCode || "EVENTO";
+  const evento = "[Segware] " + tipoEvento + " — Ocorrência #" + (ev.occurrenceId || ev.id || "?");
   const viatura = String(ev.vehiclePlate || (ev.vehicle && ev.vehicle.plate) || ev.viatura || "").trim();
   return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||ev.occurrenceId||"") };
 }
@@ -226,6 +220,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
     let todos = [];
     for (const jan of janelas) { const lote = await fetchSegwareWindow(jan.inicio, jan.fim); todos = todos.concat(lote); }
     if (todos.length === 0) return { novos:0, total:0, erro:null };
+    // /v1/events retorna todos os eventos — não há campo statuses para filtrar
     const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
     const existentesSet = new Set();
     let fromIdx = 0;
