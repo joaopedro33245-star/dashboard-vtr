@@ -3071,27 +3071,29 @@ function AreaImport({ clients, supabaseClient, onRefresh }) {
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-        // Extrai área + nome do relatório
-        // O XLSX usa a linha 1 como cabeçalho (col 0="10", col 1="Servis...", etc)
-        // Estrutura real: col[0]=N.Interno, col[1]=Data, col[2]=Cód.Cli, col[3]=Nome
+        // Extrai área + nome — usa sheet_to_json com header:1 para pegar array bruto
+        // Re-lê o arquivo com header numérico para ter acesso direto às colunas
+        const wb2 = XLSX.read(ev.target.result, { type: "binary" });
+        const ws2 = wb2.Sheets[wb2.SheetNames[0]];
+        const rawRows = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: "" });
+        // rawRows[i] = array de valores brutos
+        // Estrutura: col[0]=N.Interno ou "F - SUPERVISOR", col[1]=Data, col[2]=Cód.Cli ou supervisor, col[3]=Nome
         let areaAtual = "";
         const mapa = {}; // nome_upper -> area
-        for (const r of rows) {
-          const vals = Object.values(r);
-          const colA = String(vals[0] || "").trim();
+        for (const row of rawRows) {
+          const col0 = String(row[0] || "").trim();
+          const col3 = String(row[3] || "").trim();
           // Linha de área: "F - NOME DO SUPERVISOR"
-          const areaMatch = colA.match(/^([A-Z])\s*[-–]\s*(.+)$/);
-          if (areaMatch && !/^\d/.test(colA)) {
+          const areaMatch = col0.match(/^([A-Z])\s*[-–]\s*(.+)$/);
+          if (areaMatch && !/^\d/.test(col0)) {
             areaAtual = areaMatch[1].toUpperCase();
             continue;
           }
-          // Linha de cliente: col[0] é número (N.Interno), col[3] é o nome
-          const col0 = vals[0];
-          const col3 = vals[3];
-          const isNumerico = col0 !== null && col0 !== undefined && col0 !== "" && !isNaN(Number(col0)) && Number(col0) > 0;
-          if (isNumerico && col3 && areaAtual) {
-            const nomeUp = String(col3).trim().toUpperCase();
-            if (nomeUp.length > 3 && !nomeUp.includes("INTERNO") && !nomeUp.includes("CLIENTE")) {
+          // Linha de cliente: col0 é número inteiro (N.Interno > 0), col3 é o nome
+          const num = parseInt(col0);
+          if (!isNaN(num) && num > 0 && col3 && areaAtual) {
+            const nomeUp = col3.toUpperCase();
+            if (nomeUp.length > 3 && nomeUp !== "CLIENTE" && nomeUp !== "N. INTERNO") {
               if (!mapa[nomeUp]) mapa[nomeUp] = areaAtual;
             }
           }
