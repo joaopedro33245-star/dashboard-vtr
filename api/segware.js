@@ -15,8 +15,8 @@ export default async function handler(req, res) {
 
   const tokenLimpo = token.replace(/[\r\n]+/g, '').trim();
 
-  // Passa startDate e endDate direto como query params simples
-  const url = `https://api.segware.com.br/v1/events?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+  // Endpoint correto: /v1/occurrences com params como query object
+  const url = `https://api.segware.com.br/v1/occurrences?params[startDate]=${encodeURIComponent(startDate)}&params[endDate]=${encodeURIComponent(endDate)}`;
 
   try {
     const resp = await fetch(url, {
