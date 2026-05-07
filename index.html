@@ -1870,8 +1870,7 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
       })()}
 
       {/* ── Tendência + Top Eventos ── */}
-      <Secao titulo="Evolução e Top Eventos" icon="📈" defaultOpen={true} accent="#38bdf8">
-      <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16 }}>
+            <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16 }}>
         <Card>
           <div style={{ padding:"14px 20px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <div>
@@ -2042,7 +2041,6 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         </div>
       </Card>
       <Pagination total={rankingBase.length} page={paginaPI} perPage={PER_PAGE_PI} onChange={setPaginaPI} />
-      </Card>
       </Secao>
       </>)}
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} isPortaria={true} />}
@@ -2805,7 +2803,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         const maisLucrativos=[...comMens].sort((a,b)=>b.lucro_real-a.lucro_real).slice(0,3);
         return(
           <Secao titulo={`Diagnóstico — ${filialFiltro}${cidadeFiltro!=="Todas"?" · "+cidadeFiltro:""}`} icon="🏢" defaultOpen={false} accent={saudeColor} badge={saudeLabel}>
-          <div style={{ borderRadius:12,padding:"4px 0" }}>
+          <div>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12 }}>
               <div>
                 <div style={{ fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(255,255,255,0.4)",marginBottom:4 }}>Diagnóstico Financeiro</div>
