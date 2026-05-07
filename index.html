@@ -3411,7 +3411,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const custoVal=parseFloat(dados.custo_individual)||null;
     const metaVal=parseInt(dados.meta_desl)||0;
     const payload={
-      nome_cliente:dados.nome,
+      nome_cliente:sanitizeStr(dados.nome||"",200),
       cidade:sanitizeStr(dados.cidade||"",100),
       mensalidade:mensVal,
       bairro:sanitizeStr(dados.bairro||"",100),
@@ -3419,36 +3419,28 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       custo_individual:custoVal,
       meta_desl:metaVal
     };
-    // Usa id quando disponível (evita problema de filial normalizada vs banco)
+    // Monta query pelo id (mais rápido e preciso)
     let query=supabaseClient.from("clients").update(payload);
     if(editando.id){
       query=query.eq("id",editando.id);
     } else {
-      query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial);
+      query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial_original||editando.filial);
     }
-    const{data:updateData,error}=await query.select();
+    const{error}=await query;
     setSalvando(false);
     if(!error){
-      if(!updateData||updateData.length===0){
-        // Tenta buscar o id real e atualizar
-        const{data:found}=await supabaseClient.from("clients")
-          .select("id").eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial_original||editando.filial).limit(10);
-        if(found&&found.length>0){
-          const ids=found.map(r=>r.id);
-          await supabaseClient.from("clients").update(payload).in("id",ids);
-          setEditando(null);
-          setMsgSalvo("✅ Cliente atualizado!");
-          setTimeout(()=>setMsgSalvo(""),4000);
-          onRefresh();
-        } else {
-          setMsgSalvo("⚠️ Nenhum registro encontrado para código "+editando.codigo_cliente);
-        }
-      } else {
-        setEditando(null);
-        setMsgSalvo("✅ Cliente atualizado!");
-        setTimeout(()=>setMsgSalvo(""),4000);
-        onRefresh();
-      }
+      // Atualiza estado local sem recarregar tudo do banco
+      setClients(prev=>prev.map(c=>{
+        const mesmaChave=(editando.id&&c.id===editando.id)||
+          (!editando.id&&c.codigo_cliente===editando.codigo_cliente&&c.filial===(editando.filial_original||editando.filial));
+        if(!mesmaChave)return c;
+        return{...c,...payload};
+      }));
+      setEditando(null);
+      setMsgSalvo("✅ Cliente atualizado!");
+      setTimeout(()=>setMsgSalvo(""),4000);
+      // Invalida cache para próxima recarga completa
+      try{localStorage.removeItem("vtr_dados_cache");}catch{}
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
@@ -3591,7 +3583,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>NOME DO CLIENTE</label><input value={nome} onChange={e=>setNome(e.target.value)} style={iStyle} placeholder="Ex: Condomínio Exemplo" /></div>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiaisComAtual.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-            <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>CIDADE</label><input value={cidade} onChange={e=>setCidade(e.target.value)} style={iStyle} placeholder="Ex: Fortaleza" /></div>
             <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>BAIRRO</label><input value={bairro} onChange={e=>setBairro(e.target.value)} style={iStyle} placeholder="Ex: Centro" /></div>
           </div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 3fr",gap:12 }}>
