@@ -2692,6 +2692,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
           </div>
         </Card>
       </div>
+      </div>
       </Secao>
       {/* ── Gauge de saúde financeira + alertas de clientes críticos ── */}
       {(()=>{
@@ -2731,8 +2732,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         }
 
         return(
-          <Secao titulo="Saúde Financeira da Carteira" icon="🏥" defaultOpen={false} accent="#34d399" badge={`${total} clientes`}>
-          <div style={{ display:"grid",gridTemplateColumns:clientesAlerta.length>0?"1fr 1fr":"1fr",gap:16 }}>
+          <div style={{ display:"grid",gridTemplateColumns:clientesAlerta.length>0?"1fr 1fr":"1fr",gap:16,marginBottom:20 }}>
             {/* Gauge de saúde */}
             <Card>
               <div style={{ padding:"16px 20px",borderBottom:"1px solid rgba(255,255,255,0.07)" }}>
@@ -2785,8 +2785,6 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
               </Card>
             )}
           </div>
-          </div>
-          </Secao>
         );
       })()}
       {filialFiltro!=="Todas"&&(()=>{
@@ -2801,7 +2799,6 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         const maisLucrativos=[...comMens].sort((a,b)=>b.lucro_real-a.lucro_real).slice(0,3);
         return(
           <Secao titulo={`Diagnóstico — ${filialFiltro}${cidadeFiltro!=="Todas"?" · "+cidadeFiltro:""}`} icon="🏢" defaultOpen={false} accent={saudeColor} badge={saudeLabel}>
-          <div>
             <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12 }}>
               <div>
                 <div style={{ fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:"rgba(255,255,255,0.4)",marginBottom:4 }}>Diagnóstico Financeiro</div>
