@@ -2641,7 +2641,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
       <AlertaSemDeslocamentos dispatches={dispatches} rankingPorFilial={rankingPorFilial} onSelectCliente={setClienteSelecionado} />
 
       {/* ── Tendência + Top Eventos ── */}
-      <Secao titulo="Evolução e Top Eventos" icon="📈" defaultOpen={true} accent="#38bdf8"><div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:4 }}>
+      <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
         <Card>
           <div style={{ padding:"14px 20px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <div>
@@ -2687,7 +2687,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         </Card>
       </div>
 
-      </div></Secao>
+      </div>
       {/* ── Gauge de saúde financeira + alertas de clientes críticos ── */}
       {(()=>{
         const comMens=rankingPorFilial.filter(c=>c.mensalidade>0);
