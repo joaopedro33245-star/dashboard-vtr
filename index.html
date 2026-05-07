@@ -2036,7 +2036,7 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         </div>
       </Card>
       <Pagination total={rankingBase.length} page={paginaPI} perPage={PER_PAGE_PI} onChange={setPaginaPI} />
-      </Card></Secao>
+      </Secao>
       </>)}
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} isPortaria={true} />}
     </>
@@ -2909,7 +2909,8 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
           </table>
         </div>
         <Pagination total={rankingPorFilial.length} page={pagina} perPage={PER_PAGE} onChange={p=>setPagina(p)} />
-      </Card></Secao>
+      </Card>
+      </Secao>
     </>
   );
 }
@@ -3571,7 +3572,8 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
           </table>
         </div>
         <Pagination total={filtrados.length} page={pagina} perPage={PER_PAGE} onChange={setPagina} />
-      </Card></Secao>
+      </Card>
+      </Secao>
       {modalNovoCliente&&<ModalFormCliente titulo="Novo Cliente" filiais={FILIAIS} onSalvar={salvarNovoCliente} onFechar={()=>setModalNovoCliente(false)} salvando={salvando} />}
       {editando&&<ModalFormCliente titulo="Editar Cliente" filiais={FILIAIS} inicial={editando} onSalvar={salvarEdicao} onFechar={()=>setEditando(null)} salvando={salvando} bloqueaCodigo={true} bloqueaFilial={true} />}
     </div>
@@ -3765,7 +3767,8 @@ function RelatoriosTab({ clients, dispatches, mesFiltro, setMesFiltro }) {
           </table>
         </div>
         <Pagination total={filtrado.length} page={pagina} perPage={PER_PAGE} onChange={setPagina} />
-      </Card></Secao>
+      </Card>
+      </Secao>
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} />}
     </div>
   );
