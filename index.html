@@ -3051,178 +3051,6 @@ function MensalidadesPadraoCard({ clients, supabaseClient, onRefresh }) {
   );
 }
 
-
-// ── Importação de Áreas por Nome ──
-function AreaImport({ clients, supabaseClient, onRefresh }) {
-  const fileRef = useRef();
-  const [preview, setPreview] = useState(null);
-  const [fileName, setFileName] = useState("");
-  const [erro, setErro] = useState("");
-  const [msg, setMsg] = useState("");
-  const [aplicando, setAplicando] = useState(false);
-
-  function handleFile(e) {
-    const file = e.target.files[0]; if (!file) return;
-    setErro(""); setFileName(file.name); setPreview(null);
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const wb = XLSX.read(ev.target.result, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-
-        // Extrai área + nome — usa sheet_to_json com header:1 para pegar array bruto
-        // Re-lê o arquivo com header numérico para ter acesso direto às colunas
-        const wb2 = XLSX.read(ev.target.result, { type: "binary" });
-        const ws2 = wb2.Sheets[wb2.SheetNames[0]];
-        const rawRows = XLSX.utils.sheet_to_json(ws2, { header: 1, defval: "" });
-        // rawRows[i] = array de valores brutos
-        // Estrutura: col[0]=N.Interno ou "F - SUPERVISOR", col[1]=Data, col[2]=Cód.Cli ou supervisor, col[3]=Nome
-        let areaAtual = "";
-        const mapa = {}; // nome_upper -> area
-        for (const row of rawRows) {
-          const col0 = String(row[0] || "").trim();
-          const col3 = String(row[3] || "").trim();
-          // Linha de área: "F - NOME DO SUPERVISOR"
-          const areaMatch = col0.match(/^([A-Z])\s*[-–]\s*(.+)$/);
-          if (areaMatch && !/^\d/.test(col0)) {
-            areaAtual = areaMatch[1].toUpperCase();
-            continue;
-          }
-          // Linha de cliente: col0 é número inteiro (N.Interno > 0), col3 é o nome
-          const num = parseInt(col0);
-          if (!isNaN(num) && num > 0 && col3 && areaAtual) {
-            const nomeUp = col3.toUpperCase();
-            if (nomeUp.length > 3 && nomeUp !== "CLIENTE" && nomeUp !== "N. INTERNO") {
-              if (!mapa[nomeUp]) mapa[nomeUp] = areaAtual;
-            }
-          }
-        }
-
-        if (Object.keys(mapa).length === 0) {
-          setErro("Nenhum cliente encontrado no relatório.");
-          return;
-        }
-
-        // Cruza com os clientes do banco pelo nome
-        const matches = [];
-        const semMatch = [];
-        for (const [nomeUp, area] of Object.entries(mapa)) {
-          // Busca por correspondência exata ou parcial no nome do cliente
-          const found = clients.filter(c => {
-            const cn = (c.nome_cliente || "").trim().toUpperCase();
-            return cn === nomeUp || cn.includes(nomeUp) || nomeUp.includes(cn);
-          });
-          if (found.length > 0) {
-            for (const c of found) {
-              matches.push({ ...c, area_nova: area, nome_relatorio: nomeUp });
-            }
-          } else {
-            semMatch.push({ nome: nomeUp, area });
-          }
-        }
-
-        setPreview({ matches, semMatch, total: Object.keys(mapa).length });
-      } catch (err) {
-        setErro("Erro ao ler arquivo: " + err.message);
-      }
-    };
-    reader.readAsBinaryString(file);
-  }
-
-  async function aplicar() {
-    if (!preview || preview.matches.length === 0) return;
-    setAplicando(true);
-    setMsg("Aplicando áreas...");
-    let ok = 0;
-    // Agrupa por area para fazer updates em lote
-    for (let i = 0; i < preview.matches.length; i += 100) {
-      const lote = preview.matches.slice(i, i + 100);
-      for (const c of lote) {
-        const q = supabaseClient.from("clients").update({ area: c.area_nova });
-        if (c.id) {
-          await q.eq("id", c.id);
-        } else {
-          await q.eq("codigo_cliente", c.codigo_cliente).eq("filial", c.filial);
-        }
-        ok++;
-      }
-    }
-    setAplicando(false);
-    setMsg("✅ " + ok + " clientes com área atualizada!");
-    setPreview(null);
-    setFileName("");
-    if (fileRef.current) fileRef.current.value = "";
-    setTimeout(() => setMsg(""), 5000);
-    await onRefresh();
-  }
-
-  return (
-    <div style={{ borderRadius:16, border:"1px solid rgba(251,146,60,0.2)", background:"rgba(251,146,60,0.03)", padding:24, marginBottom:20 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
-        <div style={{ width:40, height:40, borderRadius:10, background:"rgba(251,146,60,0.15)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>🗂</div>
-        <div>
-          <div style={{ fontSize:15, fontWeight:700, color:"#fb923c" }}>Importar Áreas por Nome</div>
-          <div style={{ fontSize:12, color:"rgba(255,255,255,0.4)", marginTop:2 }}>
-            Usa o Relatório de Clientes por Área · cruza pelo nome do cliente
-          </div>
-        </div>
-      </div>
-      {msg && <div style={{ marginBottom:12, padding:"8px 14px", borderRadius:10, background: msg.startsWith("✅") ? "rgba(52,211,153,0.08)" : "rgba(239,68,68,0.08)", border:"1px solid " + (msg.startsWith("✅") ? "rgba(52,211,153,0.2)" : "rgba(239,68,68,0.3)"), fontSize:12, color: msg.startsWith("✅") ? "#34d399" : "#f87171" }}>{msg}</div>}
-      <DropZone color="#fb923c" fileName={fileName} inputRef={fileRef} onChange={handleFile} label="Selecione o Relatório de Clientes por Área (.xlsx)" />
-      {erro && <div style={{ marginTop:8, padding:"8px 14px", borderRadius:8, background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", color:"#f87171", fontSize:12 }}>⚠️ {erro}</div>}
-      {preview && (
-        <div style={{ marginTop:14 }}>
-          <div style={{ display:"flex", gap:12, marginBottom:12, flexWrap:"wrap" }}>
-            <div style={{ padding:"8px 14px", borderRadius:10, background:"rgba(52,211,153,0.08)", border:"1px solid rgba(52,211,153,0.2)", fontSize:12, color:"#34d399", fontWeight:600 }}>
-              ✅ {preview.matches.length} clientes com área encontrada
-            </div>
-            {preview.semMatch.length > 0 && (
-              <div style={{ padding:"8px 14px", borderRadius:10, background:"rgba(251,191,36,0.08)", border:"1px solid rgba(251,191,36,0.2)", fontSize:12, color:"#fbbf24", fontWeight:600 }}>
-                ⚠️ {preview.semMatch.length} sem correspondência no banco
-              </div>
-            )}
-          </div>
-          {/* Preview dos primeiros matches */}
-          <div style={{ overflowX:"auto", borderRadius:10, border:"1px solid rgba(255,255,255,0.07)", marginBottom:12, maxHeight:240, overflowY:"auto" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>
-                {["Área", "Nome no Banco", "Código", "Filial"].map(h => (
-                  <th key={h} style={{ padding:"8px 12px", textAlign:"left", color:"rgba(255,255,255,0.3)", fontSize:10, textTransform:"uppercase" }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {preview.matches.slice(0, 10).map((c, i) => (
-                  <tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}>
-                    <td style={{ padding:"8px 12px" }}>
-                      <span style={{ fontWeight:800, fontSize:14, color:"#fb923c" }}>{c.area_nova}</span>
-                    </td>
-                    <td style={{ padding:"8px 12px", color:"#fff" }}>{c.nome_cliente}</td>
-                    <td style={{ padding:"8px 12px", color:"rgba(255,255,255,0.4)", fontFamily:"monospace" }}>{c.codigo_cliente}</td>
-                    <td style={{ padding:"8px 12px", color:"rgba(255,255,255,0.4)" }}>{c.filial}</td>
-                  </tr>
-                ))}
-                {preview.matches.length > 10 && (
-                  <tr><td colSpan={4} style={{ padding:"8px 12px", color:"rgba(255,255,255,0.25)", textAlign:"center", fontSize:11 }}>+{preview.matches.length - 10} clientes adicionais</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={aplicar} disabled={aplicando} style={{ flex:1, padding:10, borderRadius:10, border:"none", background:"#fb923c", color:"#0a0f1a", fontWeight:700, fontSize:13, cursor:"pointer", opacity:aplicando?0.6:1 }}>
-              {aplicando ? "Aplicando..." : `✅ Aplicar áreas em ${preview.matches.length} clientes`}
-            </button>
-            <button onClick={() => { setPreview(null); setFileName(""); if (fileRef.current) fileRef.current.value = ""; }}
-              style={{ padding:"10px 16px", borderRadius:10, border:"1px solid rgba(255,255,255,0.1)", background:"transparent", color:"rgba(255,255,255,0.4)", fontSize:13, cursor:"pointer" }}>
-              Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, supabaseClient, onRefresh }) {
   const clientRef=useRef();const dispatchRef=useRef();
   const [clientPreview,setClientPreview]=useState(null);const [dispatchPreview,setDispatchPreview]=useState(null);
@@ -3244,35 +3072,24 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
       let areaAtual="";let coordAtual="";
       const mapped=[];
       for(const r of rows){
-        const vals=Object.values(r);
-        const colA=String(r["Conta"]||r["conta"]||r["CONTA"]||vals[0]||"").trim();
-        // Linha de área: começa com letra única + " - " + nome (ex: "F - LUCAS PABLO")
+        const colA=String(r["Conta"]||r["conta"]||r["CONTA"]||Object.values(r)[0]||"").trim();
+        // Linha de área: começa com letra única + " - " + nome
         const areaMatch=colA.match(/^([A-Z])\s*[-–]\s*(.+)$/);
         if(areaMatch&&!colA.match(/^\d/)){
           areaAtual=areaMatch[1].toUpperCase();
           coordAtual="";
           continue;
         }
-        // -- Formato padrão (Conta, Fantasia, Empresa) --
-        let codigo=String(r["Conta"]||r["conta"]||r["CONTA"]||"").trim();
-        let nome=limparFantasia(String(r["Fantasia (Razão Social)"]||r["Fantasia"]||r["Razão Social"]||r["fantasia"]||""));
         const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"");
         const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"");
         const bairroRaw=String(r["Bairro"]||r["bairro"]||r["BAIRRO"]||r["Bairro/Distrito"]||r["bairro_distrito"]||"");
-        // -- Formato relatório de área (N. Interno, Dt. Emis., Cód. Cli., Cliente) --
-        if(!codigo&&!nome){
-          const codCli=r["Cód. Cli."]||r["Cod. Cli."]||r["CÓD. CLI."]||r["COD. CLI."]||vals[2];
-          const nomeRel=r["Cliente"]||r["cliente"]||vals[3];
-          if(codCli&&nomeRel&&typeof vals[0]==="number"&&vals[0]>0){
-            codigo=String(Math.round(Number(codCli)));
-            nome=limparFantasia(String(nomeRel));
-          }
-        }
+        const codigo=String(r["Conta"]||r["conta"]||r["CONTA"]||"").trim();
+        const nome=limparFantasia(String(r["Fantasia (Razão Social)"]||r["Fantasia"]||r["Razão Social"]||r["fantasia"]||""));
         if(!codigo||!nome)continue;
         mapped.push({
           codigo_cliente:codigo,
           nome_cliente:nome,
-          filial:limparEmpresa(empresaRaw,cidadeRaw)||"SERVIS CEARÁ",
+          filial:limparEmpresa(empresaRaw,cidadeRaw),
           cidade:cidadeRaw.trim(),
           bairro:bairroRaw.trim(),
           area:areaAtual,
@@ -3429,9 +3246,6 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         )}
       </div>
-      {/* ── Importação de Áreas por Nome ── */}
-      <AreaImport clients={clients} supabaseClient={supabaseClient} onRefresh={onRefresh} />
-
       {/* ── Importação de Clientes Portaria Inteligente ── */}
       <div style={{ borderRadius:16,border:"1px solid rgba(167,139,250,0.2)",background:"rgba(167,139,250,0.04)",padding:24,marginBottom:20 }}>
         <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:16 }}>
@@ -3590,7 +3404,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   }
 
   const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);onRefresh();},[supabaseClient,onRefresh]);
-  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,cidade:sanitizeStr(dados.cidade||"",100),bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
+  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
   async function salvarEdicao(dados){
     setSalvando(true);
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
@@ -3598,7 +3412,6 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const metaVal=parseInt(dados.meta_desl)||0;
     const payload={
       nome_cliente:dados.nome,
-      cidade:sanitizeStr(dados.cidade||"",100),
       mensalidade:mensVal,
       bairro:sanitizeStr(dados.bairro||"",100),
       area:sanitizeStr(dados.area||"",10),
@@ -3756,7 +3569,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
   },[filiais,inicial?.filial]);
   const [filial,setFilial]=useState(inicial?.filial||filiais[0]);
   const [mens,setMens]=useState(inicial?.mensalidade||"");
-  const [cidade,setCidade]=useState(inicial?.cidade||"");
   const [bairro,setBairro]=useState(inicial?.bairro||"");
   const [area,setArea]=useState(inicial?.area||"");
   const [custoIndividual,setCustoIndividual]=useState(inicial?.custo_individual||CUSTO_FISCAL||48);
@@ -3777,7 +3589,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>NOME DO CLIENTE</label><input value={nome} onChange={e=>setNome(e.target.value)} style={iStyle} placeholder="Ex: Condomínio Exemplo" /></div>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiaisComAtual.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-            <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>CIDADE</label><input value={cidade} onChange={e=>setCidade(e.target.value)} style={iStyle} placeholder="Ex: Fortaleza" /></div>
             <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>BAIRRO</label><input value={bairro} onChange={e=>setBairro(e.target.value)} style={iStyle} placeholder="Ex: Centro" /></div>
           </div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 3fr",gap:12 }}>
@@ -3793,7 +3604,7 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
         </div>
         <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:24 }}>
           <button onClick={onFechar} style={{ background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#fff",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontSize:13 }}>Cancelar</button>
-          <button onClick={()=>onSalvar({codigo,nome,filial,cidade,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
+          <button onClick={()=>onSalvar({codigo,nome,filial,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
         </div>
       </div>
     </div>
@@ -4204,8 +4015,9 @@ function App() {
   const [loadingData,setLoadingData]=useState(false);const [loadingMsg,setLoadingMsg]=useState("Sincronizando…");
   const [importMsg,setImportMsg]=useState("");const [erroGlobal,setErroGlobal]=useState("");
   const [confirmLimparDesl,setConfirmLimparDesl]=useState(false);const [confirmLimparTudo,setConfirmLimparTudo]=useState(false);
+  const [confirmLimparMes,setConfirmLimparMes]=useState(false);const [mesSelecionadoLimpar,setMesSelecionadoLimpar]=useState("");
   // -- SEGURANÇA: texto de confirmação para ações destrutivas --
-  const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");
+  const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");const [confirmTextMes,setConfirmTextMes]=useState("");
   // -- SEGWARE: estados de sincronização automática --
   const [segSyncStatus,setSegSyncStatus]=useState("idle"); // idle | syncing | ok | erro
   const [segSyncMsg,setSegSyncMsg]=useState("");
@@ -4477,6 +4289,38 @@ function App() {
     setLoadingData(false);
   }
 
+  async function handleLimparMes(){
+    if(!mesSelecionadoLimpar)return;
+    setLoadingData(true);
+    try{
+      // Busca IDs dos deslocamentos do mês selecionado
+      let allIds=[],from=0;const PAGE=1000;
+      while(true){
+        const{data,error}=await supabaseClient.from("dispatches").select("id,data_hora").range(from,from+PAGE-1);
+        if(error||!data||data.length===0)break;
+        const doMes=data.filter(d=>{const dt=parseDataHora(d.data_hora);return dt&&getMonthKey(dt)===mesSelecionadoLimpar;});
+        allIds=allIds.concat(doMes.map(r=>r.id));
+        if(data.length<PAGE)break;
+        from+=PAGE;
+      }
+      if(allIds.length>0){
+        for(let i=0;i<allIds.length;i+=500){
+          const{error}=await supabaseClient.from("dispatches").delete().in("id",allIds.slice(i,i+500));
+          if(error){setImportMsg("❌ Erro ao apagar: "+error.message);setLoadingData(false);return;}
+        }
+      }
+      setConfirmLimparMes(false);setMesSelecionadoLimpar("");setConfirmTextMes("");
+      setImportMsg("✅ "+allIds.length+" deslocamentos de "+monthLabel(mesSelecionadoLimpar)+" apagados!");
+      setTimeout(()=>setImportMsg(""),5000);
+      try{localStorage.removeItem('vtr_dados_cache');}catch{}
+      await carregarDados(true);
+    }catch(e){
+      setImportMsg("❌ Erro inesperado: "+e.message);
+      await carregarDados();
+    }
+    setLoadingData(false);
+  }
+
   if(checkingAuth)return(
     <div style={{ minHeight:"100vh",background:"#080c14",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16 }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -4553,6 +4397,25 @@ function App() {
               </div>
             </div>
           ):<button onClick={()=>{setConfirmLimparDesl(true);setConfirmTextDesl("");}} style={{ border:"1px solid rgba(251,146,60,0.35)",background:"rgba(251,146,60,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(251,146,60,0.8)",cursor:"pointer" }}>🗑 Limpar deslocamentos</button>)}
+          {isAdmin&&dispatches.length>0&&(confirmLimparMes?(
+            <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.35)",minWidth:240 }}>
+              <span style={{ fontSize:11,color:"#f87171",fontWeight:700 }}>🗓 Apagar deslocamentos de:</span>
+              <select value={mesSelecionadoLimpar} onChange={e=>setMesSelecionadoLimpar(e.target.value)} style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"#0f172a",color:mesSelecionadoLimpar?"#f87171":"rgba(255,255,255,0.4)",fontSize:11,outline:"none" }}>
+                <option value="">— Selecione o mês —</option>
+                {[...new Set(dispatches.map(d=>{const dt=parseDataHora(d.data_hora);return dt?getMonthKey(dt):null;}).filter(Boolean))].sort().reverse().map(mk=><option key={mk} value={mk}>{monthLabel(mk)}</option>)}
+              </select>
+              {mesSelecionadoLimpar&&<>
+                <span style={{ fontSize:10,color:"rgba(239,68,68,0.7)" }}>
+                  {dispatches.filter(d=>{const dt=parseDataHora(d.data_hora);return dt&&getMonthKey(dt)===mesSelecionadoLimpar;}).length} deslocamentos serão apagados
+                </span>
+                <input value={confirmTextMes} onChange={e=>setConfirmTextMes(e.target.value)} placeholder='Digite "CONFIRMAR" para prosseguir' style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#f87171",fontSize:11,outline:"none",width:"100%" }} />
+              </>}
+              <div style={{ display:"flex",gap:6 }}>
+                <button onClick={handleLimparMes} disabled={!mesSelecionadoLimpar||confirmTextMes!=="CONFIRMAR"} style={{ flex:1,border:"none",background:mesSelecionadoLimpar&&confirmTextMes==="CONFIRMAR"?"#ef4444":"rgba(239,68,68,0.3)",color:"#fff",borderRadius:7,padding:"5px 8px",cursor:mesSelecionadoLimpar&&confirmTextMes==="CONFIRMAR"?"pointer":"not-allowed",fontSize:11,fontWeight:700 }}>Apagar</button>
+                <button onClick={()=>{setConfirmLimparMes(false);setMesSelecionadoLimpar("");setConfirmTextMes("");}} style={{ flex:1,border:"1px solid rgba(255,255,255,0.15)",background:"transparent",color:"rgba(255,255,255,0.4)",borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:11 }}>Cancelar</button>
+              </div>
+            </div>
+          ):<button onClick={()=>{setConfirmLimparMes(true);setMesSelecionadoLimpar("");}} style={{ border:"1px solid rgba(96,165,250,0.35)",background:"rgba(96,165,250,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(96,165,250,0.8)",cursor:"pointer" }}>🗓 Limpar por mês</button>)}
           {isAdmin&&(clients.length>0||dispatches.length>0)&&(confirmLimparTudo?(
             <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",minWidth:240 }}>
               <div style={{ fontSize:11,color:"#f87171",lineHeight:1.4 }}><div style={{ fontWeight:700 }}>⚠️ APAGAR TUDO PERMANENTEMENTE?</div><div style={{ opacity:0.8 }}>{clients.length} clientes + {dispatches.length} desl.</div></div>
