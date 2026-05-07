@@ -3412,6 +3412,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const metaVal=parseInt(dados.meta_desl)||0;
     const payload={
       nome_cliente:dados.nome,
+      cidade:sanitizeStr(dados.cidade||"",100),
       mensalidade:mensVal,
       bairro:sanitizeStr(dados.bairro||"",100),
       area:sanitizeStr(dados.area||"",10),
@@ -3569,7 +3570,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
   },[filiais,inicial?.filial]);
   const [filial,setFilial]=useState(inicial?.filial||filiais[0]);
   const [mens,setMens]=useState(inicial?.mensalidade||"");
-  const [cidade,setCidade]=useState(inicial?.cidade||"");
   const [bairro,setBairro]=useState(inicial?.bairro||"");
   const [area,setArea]=useState(inicial?.area||"");
   const [custoIndividual,setCustoIndividual]=useState(inicial?.custo_individual||CUSTO_FISCAL||48);
@@ -3590,7 +3590,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>NOME DO CLIENTE</label><input value={nome} onChange={e=>setNome(e.target.value)} style={iStyle} placeholder="Ex: Condomínio Exemplo" /></div>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiaisComAtual.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-            <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>CIDADE</label><input value={cidade} onChange={e=>setCidade(e.target.value)} style={iStyle} placeholder="Ex: Fortaleza" /></div>
             <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>BAIRRO</label><input value={bairro} onChange={e=>setBairro(e.target.value)} style={iStyle} placeholder="Ex: Centro" /></div>
           </div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 3fr",gap:12 }}>
@@ -3606,7 +3605,7 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
         </div>
         <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:24 }}>
           <button onClick={onFechar} style={{ background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#fff",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontSize:13 }}>Cancelar</button>
-          <button onClick={()=>onSalvar({codigo,nome,filial,cidade,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
+          <button onClick={()=>onSalvar({codigo,nome,filial,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
         </div>
       </div>
     </div>
@@ -4017,9 +4016,8 @@ function App() {
   const [loadingData,setLoadingData]=useState(false);const [loadingMsg,setLoadingMsg]=useState("Sincronizando…");
   const [importMsg,setImportMsg]=useState("");const [erroGlobal,setErroGlobal]=useState("");
   const [confirmLimparDesl,setConfirmLimparDesl]=useState(false);const [confirmLimparTudo,setConfirmLimparTudo]=useState(false);
-  const [confirmLimparMes,setConfirmLimparMes]=useState(false);const [mesSelecionadoLimpar,setMesSelecionadoLimpar]=useState("");
   // -- SEGURANÇA: texto de confirmação para ações destrutivas --
-  const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");const [confirmTextMes,setConfirmTextMes]=useState("");
+  const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");
   // -- SEGWARE: estados de sincronização automática --
   const [segSyncStatus,setSegSyncStatus]=useState("idle"); // idle | syncing | ok | erro
   const [segSyncMsg,setSegSyncMsg]=useState("");
@@ -4291,37 +4289,6 @@ function App() {
     setLoadingData(false);
   }
 
-  async function handleLimparMes(){
-    if(!mesSelecionadoLimpar)return;
-    setLoadingData(true);
-    try{
-      let allIds=[],from=0;const PAGE=1000;
-      while(true){
-        const{data,error}=await supabaseClient.from("dispatches").select("id,data_hora").range(from,from+PAGE-1);
-        if(error||!data||data.length===0)break;
-        const doMes=data.filter(d=>{const dt=parseDataHora(d.data_hora);return dt&&getMonthKey(dt)===mesSelecionadoLimpar;});
-        allIds=allIds.concat(doMes.map(r=>r.id));
-        if(data.length<PAGE)break;
-        from+=PAGE;
-      }
-      if(allIds.length>0){
-        for(let i=0;i<allIds.length;i+=500){
-          const{error}=await supabaseClient.from("dispatches").delete().in("id",allIds.slice(i,i+500));
-          if(error){setImportMsg("❌ Erro ao apagar: "+error.message);setLoadingData(false);return;}
-        }
-      }
-      setConfirmLimparMes(false);setMesSelecionadoLimpar("");setConfirmTextMes("");
-      setImportMsg("✅ "+allIds.length+" deslocamentos de "+monthLabel(mesSelecionadoLimpar)+" apagados!");
-      setTimeout(()=>setImportMsg(""),5000);
-      try{localStorage.removeItem('vtr_dados_cache');}catch{}
-      await carregarDados(true);
-    }catch(e){
-      setImportMsg("❌ Erro inesperado: "+e.message);
-      await carregarDados();
-    }
-    setLoadingData(false);
-  }
-
   if(checkingAuth)return(
     <div style={{ minHeight:"100vh",background:"#080c14",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16 }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -4398,25 +4365,6 @@ function App() {
               </div>
             </div>
           ):<button onClick={()=>{setConfirmLimparDesl(true);setConfirmTextDesl("");}} style={{ border:"1px solid rgba(251,146,60,0.35)",background:"rgba(251,146,60,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(251,146,60,0.8)",cursor:"pointer" }}>🗑 Limpar deslocamentos</button>)}
-          {isAdmin&&dispatches.length>0&&(confirmLimparMes?(
-            <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.35)",minWidth:240 }}>
-              <span style={{ fontSize:11,color:"#f87171",fontWeight:700 }}>🗓 Apagar deslocamentos de:</span>
-              <select value={mesSelecionadoLimpar} onChange={e=>setMesSelecionadoLimpar(e.target.value)} style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"#0f172a",color:mesSelecionadoLimpar?"#f87171":"rgba(255,255,255,0.4)",fontSize:11,outline:"none" }}>
-                <option value="">— Selecione o mês —</option>
-                {[...new Set(dispatches.map(d=>{const dt=parseDataHora(d.data_hora);return dt?getMonthKey(dt):null;}).filter(Boolean))].sort().reverse().map(mk=><option key={mk} value={mk}>{monthLabel(mk)}</option>)}
-              </select>
-              {mesSelecionadoLimpar&&<>
-                <span style={{ fontSize:10,color:"rgba(239,68,68,0.7)" }}>
-                  {dispatches.filter(d=>{const dt=parseDataHora(d.data_hora);return dt&&getMonthKey(dt)===mesSelecionadoLimpar;}).length} deslocamentos serão apagados
-                </span>
-                <input value={confirmTextMes} onChange={e=>setConfirmTextMes(e.target.value)} placeholder='Digite "CONFIRMAR" para prosseguir' style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#f87171",fontSize:11,outline:"none",width:"100%" }} />
-              </>}
-              <div style={{ display:"flex",gap:6 }}>
-                <button onClick={handleLimparMes} disabled={!mesSelecionadoLimpar||confirmTextMes!=="CONFIRMAR"} style={{ flex:1,border:"none",background:mesSelecionadoLimpar&&confirmTextMes==="CONFIRMAR"?"#ef4444":"rgba(239,68,68,0.3)",color:"#fff",borderRadius:7,padding:"5px 8px",cursor:mesSelecionadoLimpar&&confirmTextMes==="CONFIRMAR"?"pointer":"not-allowed",fontSize:11,fontWeight:700 }}>Apagar</button>
-                <button onClick={()=>{setConfirmLimparMes(false);setMesSelecionadoLimpar("");setConfirmTextMes("");}} style={{ flex:1,border:"1px solid rgba(255,255,255,0.15)",background:"transparent",color:"rgba(255,255,255,0.4)",borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:11 }}>Cancelar</button>
-              </div>
-            </div>
-          ):<button onClick={()=>{setConfirmLimparMes(true);setMesSelecionadoLimpar("");}} style={{ border:"1px solid rgba(96,165,250,0.35)",background:"rgba(96,165,250,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(96,165,250,0.8)",cursor:"pointer" }}>🗓 Limpar por mês</button>)}
           {isAdmin&&(clients.length>0||dispatches.length>0)&&(confirmLimparTudo?(
             <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",minWidth:240 }}>
               <div style={{ fontSize:11,color:"#f87171",lineHeight:1.4 }}><div style={{ fontWeight:700 }}>⚠️ APAGAR TUDO PERMANENTEMENTE?</div><div style={{ opacity:0.8 }}>{clients.length} clientes + {dispatches.length} desl.</div></div>
