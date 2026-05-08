@@ -1866,6 +1866,7 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         );
       })()}
 
+      {verMais&&<>
       {/* ── Tendência + Top Eventos ── */}
       <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
         <Card>
@@ -1979,15 +1980,12 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
       <MesesResumo dispatches={mesFiltroEfetivo==="Todos"?dispatches:dispatchesMes} filialFiltro={filialFiltro} tipo="pi" clients={clients} />
 
       {/* ── Gráficos por filial ── */}
-      <Secao titulo="Gráficos por Filial — PI" icon="📊" defaultOpen={false} accent="#a78bfa">
       <div className="grid-2" style={{ marginBottom:0 }}>
         <Card><div style={{ padding:20 }}><SectionLabel>📊 Eventos por Filial</SectionLabel><BarChart data={porFilial.map(d=>({label:d.filial.slice(0,14),value:d.total}))} label="Eventos" height={220} /></div></Card>
         <Card><div style={{ padding:20 }}><SectionLabel>🍩 Distribuição por Filial</SectionLabel><DonutChart data={porFilial.slice(0,8).map(d=>({label:d.filial.slice(0,18),value:d.total}))} height={220} /></div></Card>
       </div>
-      </Secao>
 
       {/* ── Ranking ── */}
-      <Secao titulo="Ranking — Portaria Inteligente" icon="🏆" defaultOpen={true} accent="#a78bfa" badge={`${rankingBase.length}`}>
       <Card>
         <div style={{ borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12 }}>
           <div><SectionLabel>Ranking — Portaria Inteligente</SectionLabel><p style={{ fontSize:11,color:"rgba(255,255,255,0.25)",margin:"-8px 0 0" }}>Ordenado por quantidade de eventos · {rankingBase.length} clientes</p></div>
@@ -2038,7 +2036,6 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         </div>
       </Card>
       <Pagination total={rankingBase.length} page={paginaPI} perPage={PER_PAGE_PI} onChange={setPaginaPI} />
-      </Secao>
       </>)}
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} isPortaria={true} />}
     </>
@@ -2553,6 +2550,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
   const [clienteSelecionado,setClienteSelecionado]=useState(null);
   const [loadingTabela,setLoadingTabela]=useState(false); // MELHORIA 3
   const [pagina,setPagina]=useState(1);
+  const [verMais,setVerMais]=useState(false);
   const PER_PAGE=15;
   useEffect(()=>{setCidadeFiltro("Todas");setPagina(1);},[filialFiltro]);
   useEffect(()=>{setPagina(1);},[cidadeFiltro]);
@@ -2642,6 +2640,15 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
       {/* ── Alerta: clientes sem deslocamentos há 2+ meses ── */}
       <AlertaSemDeslocamentos dispatches={dispatches} rankingPorFilial={rankingPorFilial} onSelectCliente={setClienteSelecionado} />
 
+      {/* ── Botão Ver Mais ── */}
+      <div style={{display:"flex",justifyContent:"center",marginBottom:verMais?8:20}}>
+        <button onClick={()=>setVerMais(v=>!v)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 24px",borderRadius:99,border:"1px solid rgba(56,189,248,0.3)",background:verMais?"rgba(56,189,248,0.12)":"rgba(255,255,255,0.04)",color:verMais?"#38bdf8":"rgba(255,255,255,0.5)",fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.2s"}}>
+          <span style={{display:"inline-block",transform:verMais?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s"}}>▼</span>
+          {verMais?"Ocultar gráficos e análises":"Ver gráficos e análises"}
+        </button>
+      </div>
+
+      {verMais&&<>
       {/* ── Tendência + Top Eventos ── */}
       <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
         <Card>
@@ -2847,14 +2854,13 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
           </div>
         );
       })()}
+      </>
+      }
       <MesesResumo dispatches={mesFiltroEfetivo==="Todos"?dispatches:dispatchesMes} filialFiltro={filialFiltro} cidadeFiltro={cidadeFiltro} codigosFiltrados={cidadeFiltro!=="Todas"?new Set(rankingPorFilial.map(c=>`${c.codigo_cliente}||${c.filial}`)):null} tipo="normal" clients={clients} />
-      <Secao titulo="Gráficos por Filial" icon="📊" defaultOpen={false} accent="#818cf8">
       <div className="grid-2" style={{ marginBottom:0 }}>
         <Card><div style={{ padding:20 }}><SectionLabel>📊 Deslocamentos por Filial</SectionLabel><BarChart data={porFilialFiltrado.map(d=>({label:d.filial.slice(0,14),value:d.total}))} label="Deslocamentos" height={220} /></div></Card>
         <Card><div style={{ padding:20 }}><SectionLabel>🍩 Distribuição por Filial</SectionLabel><DonutChart data={porFilialFiltrado.slice(0,8).map(d=>({label:d.filial.slice(0,18),value:d.total}))} height={220} /></div></Card>
       </div>
-      </Secao>
-      <Secao titulo="Ranking de Clientes" icon="🏆" defaultOpen={true} accent="#38bdf8" badge={`${rankingPorFilial.length}`}>
       <Card>
         <div style={{ borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"16px 20px" }}>
           <div style={{ marginBottom:12 }}><SectionLabel>Ranking de Clientes</SectionLabel><p style={{ fontSize:11,color:"rgba(255,255,255,0.25)",margin:"-8px 0 0" }}>Ordenado por deslocamentos · Custo @ R$ {CUSTO_FISCAL}/desl. · Portaria Inteligente excluída</p></div>
@@ -2914,7 +2920,6 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         </div>
         <Pagination total={rankingPorFilial.length} page={pagina} perPage={PER_PAGE} onChange={p=>setPagina(p)} />
       </Card>
-      </Secao>
     </>
   );
 }
