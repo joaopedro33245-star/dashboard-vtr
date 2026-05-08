@@ -2855,7 +2855,6 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         );
       })()}
       </>
-      }
       <MesesResumo dispatches={mesFiltroEfetivo==="Todos"?dispatches:dispatchesMes} filialFiltro={filialFiltro} cidadeFiltro={cidadeFiltro} codigosFiltrados={cidadeFiltro!=="Todas"?new Set(rankingPorFilial.map(c=>`${c.codigo_cliente}||${c.filial}`)):null} tipo="normal" clients={clients} />
       <div className="grid-2" style={{ marginBottom:0 }}>
         <Card><div style={{ padding:20 }}><SectionLabel>📊 Deslocamentos por Filial</SectionLabel><BarChart data={porFilialFiltrado.map(d=>({label:d.filial.slice(0,14),value:d.total}))} label="Deslocamentos" height={220} /></div></Card>
