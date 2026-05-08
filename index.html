@@ -417,22 +417,6 @@ function EmptyState({ icon, title, sub }) {
 function Card({ children, style }) {
   return <div style={{ borderRadius:16, border:"1px solid rgba(255,255,255,0.08)", background:"rgba(255,255,255,0.04)", overflow:"hidden", ...style }}>{children}</div>;
 }
-
-function Secao({ titulo, icon, children, defaultOpen=false, accent="#38bdf8", badge=null }) {
-  const [aberto, setAberto] = React.useState(defaultOpen);
-  return (
-    <div style={{ marginBottom:12, borderRadius:12, border:"1px solid rgba(255,255,255,0.08)", background:"rgba(255,255,255,0.02)", overflow:"hidden" }}>
-      <div onClick={()=>setAberto(a=>!a)} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 16px", cursor:"pointer", userSelect:"none", background:aberto?"rgba(255,255,255,0.03)":"transparent" }}>
-        <span style={{fontSize:14}}>{icon}</span>
-        <span style={{fontSize:13,fontWeight:700,color:"#fff",flex:1}}>{titulo}</span>
-        {badge!=null&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:99,background:`${accent}20`,color:accent}}>{badge}</span>}
-        <span style={{fontSize:11,color:"rgba(255,255,255,0.3)",display:"inline-block",transform:aberto?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}>▼</span>
-      </div>
-      {aberto&&<div style={{padding:"4px 4px 8px"}}>{children}</div>}
-    </div>
-  );
-}
-
 function ColTag({ children, color }) {
   return <span style={{ display:"inline-flex", alignItems:"center", background:`${color}15`, border:`1px solid ${color}30`, borderRadius:6, padding:"2px 8px", fontSize:11, color, fontWeight:600, fontFamily:"monospace" }}>{children}</span>;
 }
@@ -1866,9 +1850,8 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         );
       })()}
 
-      {verMais&&<>
       {/* ── Tendência + Top Eventos ── */}
-      <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
+      {verMais&&<div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
         <Card>
           <div style={{ padding:"14px 20px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <div>
@@ -2640,17 +2623,15 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
       {/* ── Alerta: clientes sem deslocamentos há 2+ meses ── */}
       <AlertaSemDeslocamentos dispatches={dispatches} rankingPorFilial={rankingPorFilial} onSelectCliente={setClienteSelecionado} />
 
-      {/* ── Botão Ver Mais ── */}
-      <div style={{display:"flex",justifyContent:"center",marginBottom:verMais?8:20}}>
-        <button onClick={()=>setVerMais(v=>!v)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 24px",borderRadius:99,border:"1px solid rgba(56,189,248,0.3)",background:verMais?"rgba(56,189,248,0.12)":"rgba(255,255,255,0.04)",color:verMais?"#38bdf8":"rgba(255,255,255,0.5)",fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.2s"}}>
-          <span style={{display:"inline-block",transform:verMais?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s"}}>▼</span>
-          {verMais?"Ocultar gráficos e análises":"Ver gráficos e análises"}
+      <div style={{display:"flex",justifyContent:"center",margin:"8px 0 20px"}}>
+        <button onClick={()=>setVerMais(v=>!v)} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 28px",borderRadius:99,border:"1px solid rgba(56,189,248,0.35)",background:verMais?"rgba(56,189,248,0.12)":"rgba(255,255,255,0.04)",color:verMais?"#38bdf8":"rgba(255,255,255,0.5)",fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.2s"}}>
+          <span style={{display:"inline-block",transform:verMais?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.25s",fontSize:11}}>▼</span>
+          {verMais ? "Ocultar gráficos e análises" : "▼ Ver gráficos e análises"}
         </button>
       </div>
 
-      {verMais&&<>
       {/* ── Tendência + Top Eventos ── */}
-      <div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
+      {verMais&&<div style={{ display:"grid",gridTemplateColumns:"2fr 1fr",gap:16,marginBottom:20 }}>
         <Card>
           <div style={{ padding:"14px 20px",borderBottom:"1px solid rgba(255,255,255,0.07)",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
             <div>
@@ -2696,8 +2677,9 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
         </Card>
       </div>
 
+      </div>}
       {/* ── Gauge de saúde financeira + alertas de clientes críticos ── */}
-      {(()=>{
+      {verMais&&(()=>{
         const comMens=rankingPorFilial.filter(c=>c.mensalidade>0);
         const saudavel=comMens.filter(c=>c.status_financeiro==="SAUDÁVEL").length;
         const risco=comMens.filter(c=>c.status_financeiro==="RISCO").length;
@@ -2789,7 +2771,7 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
           </div>
         );
       })()}
-      {filialFiltro!=="Todas"&&(()=>{
+      {verMais&&filialFiltro!=="Todas"&&(()=>{
         const base=rankingPorFilial;const comMens=base.filter(c=>c.mensalidade>0);const semMens=base.filter(c=>!c.mensalidade||c.mensalidade===0);const lucrativos=comMens.filter(c=>c.lucro_real>0);const prejuizo=comMens.filter(c=>c.lucro_real<0);
         const totalMens=comMens.reduce((s,c)=>s+c.mensalidade,0);const totalCusto=base.reduce((s,c)=>s+c.custo_operacional,0);const totalSaldo=totalMens-totalCusto;
         const saudePct=comMens.length>0?Math.round((lucrativos.length/comMens.length)*100):0;
@@ -2854,7 +2836,6 @@ function DashboardTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos
           </div>
         );
       })()}
-      </>
       <MesesResumo dispatches={mesFiltroEfetivo==="Todos"?dispatches:dispatchesMes} filialFiltro={filialFiltro} cidadeFiltro={cidadeFiltro} codigosFiltrados={cidadeFiltro!=="Todas"?new Set(rankingPorFilial.map(c=>`${c.codigo_cliente}||${c.filial}`)):null} tipo="normal" clients={clients} />
       <div className="grid-2" style={{ marginBottom:0 }}>
         <Card><div style={{ padding:20 }}><SectionLabel>📊 Deslocamentos por Filial</SectionLabel><BarChart data={porFilialFiltrado.map(d=>({label:d.filial.slice(0,14),value:d.total}))} label="Deslocamentos" height={220} /></div></Card>
