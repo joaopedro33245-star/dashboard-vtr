@@ -2038,7 +2038,6 @@ function PortariaTab({ dispatches, clients, supabaseClient, mesFiltro, setMesFil
         </div>
       </Card>
       <Pagination total={rankingBase.length} page={paginaPI} perPage={PER_PAGE_PI} onChange={setPaginaPI} />
-      </Card>
       </Secao>
       </>)}
       {clienteSelecionado&&<ClienteModal cliente={clienteSelecionado} dispatches={dispatches} onClose={()=>setClienteSelecionado(null)} supabaseClient={supabaseClient} isPortaria={true} />}
