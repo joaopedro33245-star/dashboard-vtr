@@ -1,27 +1,24 @@
 
 <!DOCTYPE html>
-<!-- saved from url=(0053)file:///C:/Users/joao.batista/Downloads/index_60.html -->
 <html lang="pt-BR"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
   
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dashboard — Central de Monitoramento VTR</title>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/react.production.min.js.baixados" crossorigin=""></script>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/react-dom.production.min.js.baixados" crossorigin=""></script>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/babel.min.js.baixados"></script>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/xlsx.full.min.js.baixados"></script>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/supabase-js@2"></script>
-  <script src="./Dashboard — Central de Monitoramento VTR_files/chart.umd.min.js.baixados"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin=""></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script>
     // ═══════════════════════════════════════════════════════════
-    //  CONFIGURAÇÃO carregada com segurança pelo Vercel
-    //  As chaves ficam nas variáveis de ambiente do Vercel,
-    //  nunca expostas no GitHub.
+    //  CONFIGURAÇÃO — preencha suas credenciais do Supabase abaixo
+    //  (usado ao abrir o arquivo localmente, fora do Vercel)
     // ═══════════════════════════════════════════════════════════
-    // As variáveis são injetadas pelo endpoint /config.js
-    // (api/config.js no Vercel) — veja vercel.json
-    // ═══════════════════════════════════════════════════════════
+    window._SUPABASE_URL  = "https://edfnqwjhugptbmjlgysi.supabase.co";
+    window._SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkZm5xd2podWdwdGJtamxneXNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNjUyMjEsImV4cCI6MjA4ODc0MTIyMX0.fpHwhOGoy-9jQIQMwyKs0SZmnnQG50VwvEBOdFcFVr8";
+    // window._SEGWARE_TOKEN = "SEU_TOKEN_SEGWARE"; // opcional
   </script>
-  <script src="file:///C:/config.js"></script>
   <script>
     (function() {
       var url  = window._SUPABASE_URL;
