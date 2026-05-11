@@ -3385,7 +3385,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     else{setSortBy(campo);setSortDir("asc");}
   }
 
-  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";const{error}=await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);if(!error){setClients(prev=>prev.map(x=>x.codigo_cliente===c.codigo_cliente&&x.filial===c.filial?{...x,status:novoStatus}:x));try{localStorage.removeItem("vtr_dados_cache");}catch{}}},[supabaseClient]);
+  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";const{error}=await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);if(!error){try{localStorage.removeItem("vtr_dados_cache");}catch{}onRefresh();}},[supabaseClient,onRefresh]);
   async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
   async function salvarEdicao(dados){
     setSalvando(true);
@@ -3411,14 +3411,11 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const{error}=await query;
     setSalvando(false);
     if(!error){
-      setClients(prev=>prev.map(c=>{
-        const match=(editando.id&&c.id===editando.id)||(!editando.id&&c.codigo_cliente===editando.codigo_cliente&&c.filial===(editando.filial_original||editando.filial));
-        return match?{...c,...payload}:c;
-      }));
       setEditando(null);
       setMsgSalvo("✅ Cliente atualizado!");
       setTimeout(()=>setMsgSalvo(""),4000);
       try{localStorage.removeItem("vtr_dados_cache");}catch{}
+      onRefresh();
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
