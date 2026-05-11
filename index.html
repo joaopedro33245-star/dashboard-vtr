@@ -3403,16 +3403,15 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     else{setSortBy(campo);setSortDir("asc");}
   }
 
-  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);onRefresh();},[supabaseClient,onRefresh]);
-  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
+  const toggleStatus=useCallback(async(c)=>{const novoStatus=c.status==="ativo"?"inativo":"ativo";const{error}=await supabaseClient.from("clients").update({status:novoStatus}).eq("codigo_cliente",c.codigo_cliente);if(!error){setClients(prev=>prev.map(x=>x.codigo_cliente===c.codigo_cliente&&x.filial===c.filial?{...x,status:novoStatus}:x));try{localStorage.removeItem("vtr_dados_cache");}catch{}}},[supabaseClient]);
+  async function salvarNovoCliente(dados){setSalvando(true);const{error}=await supabaseClient.from("clients").upsert([{codigo_cliente:dados.codigo,nome_cliente:dados.nome,filial:dados.filial,bairro:sanitizeStr(dados.bairro||"",100),area:sanitizeStr(dados.area||"",10),mensalidade:parseFloat(dados.mensalidade)||0,custo_individual:parseFloat(dados.custo_individual)||null,meta_desl:parseInt(dados.meta_desl)||0,status:"ativo"}],{onConflict:"codigo_cliente,filial"});setSalvando(false);if(!error){setModalNovoCliente(false);setMsgSalvo("✅ Cliente salvo!");setTimeout(()=>setMsgSalvo(""),4000);try{localStorage.removeItem("vtr_dados_cache");}catch{}onRefresh();}else{setMsgSalvo("❌ Erro ao salvar: "+(error.message||JSON.stringify(error)));}}
   async function salvarEdicao(dados){
     setSalvando(true);
     const mensVal=parseFloat(String(dados.mensalidade).replace(",","."))||0;
     const custoVal=parseFloat(dados.custo_individual)||null;
     const metaVal=parseInt(dados.meta_desl)||0;
     const payload={
-      nome_cliente:sanitizeStr(dados.nome||"",200),
-      cidade:sanitizeStr(dados.cidade||"",100),
+      nome_cliente:dados.nome,
       mensalidade:mensVal,
       bairro:sanitizeStr(dados.bairro||"",100),
       area:sanitizeStr(dados.area||"",10),
@@ -3426,29 +3425,17 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     } else {
       query=query.eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial);
     }
-    const{data:updateData,error}=await query.select();
+    const{error}=await query;
     setSalvando(false);
     if(!error){
-      if(!updateData||updateData.length===0){
-        // Tenta buscar o id real e atualizar
-        const{data:found}=await supabaseClient.from("clients")
-          .select("id").eq("codigo_cliente",editando.codigo_cliente).eq("filial",editando.filial_original||editando.filial).limit(10);
-        if(found&&found.length>0){
-          const ids=found.map(r=>r.id);
-          await supabaseClient.from("clients").update(payload).in("id",ids);
-          setEditando(null);
-          setMsgSalvo("✅ Cliente atualizado!");
-          setTimeout(()=>setMsgSalvo(""),4000);
-          onRefresh();
-        } else {
-          setMsgSalvo("⚠️ Nenhum registro encontrado para código "+editando.codigo_cliente);
-        }
-      } else {
-        setEditando(null);
-        setMsgSalvo("✅ Cliente atualizado!");
-        setTimeout(()=>setMsgSalvo(""),4000);
-        onRefresh();
-      }
+      setClients(prev=>prev.map(c=>{
+        const match=(editando.id&&c.id===editando.id)||(!editando.id&&c.codigo_cliente===editando.codigo_cliente&&c.filial===(editando.filial_original||editando.filial));
+        return match?{...c,...payload}:c;
+      }));
+      setEditando(null);
+      setMsgSalvo("✅ Cliente atualizado!");
+      setTimeout(()=>setMsgSalvo(""),4000);
+      try{localStorage.removeItem("vtr_dados_cache");}catch{}
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
@@ -3569,7 +3556,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
     return[...filiais,inicial.filial];
   },[filiais,inicial?.filial]);
   const [filial,setFilial]=useState(inicial?.filial||filiais[0]);
-  const [cidade,setCidade]=useState(inicial?.cidade||"");
   const [mens,setMens]=useState(inicial?.mensalidade||"");
   const [bairro,setBairro]=useState(inicial?.bairro||"");
   const [area,setArea]=useState(inicial?.area||"");
@@ -3591,7 +3577,6 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>NOME DO CLIENTE</label><input value={nome} onChange={e=>setNome(e.target.value)} style={iStyle} placeholder="Ex: Condomínio Exemplo" /></div>
           <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>FILIAL</label><select value={filial} onChange={e=>setFilial(e.target.value)} disabled={bloqueaFilial} style={{ ...iStyle,opacity:bloqueaFilial?0.5:1 }}>{filiaisComAtual.map(f=><option key={f} value={f}>{f}</option>)}</select></div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}>
-            <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>CIDADE</label><input value={cidade} onChange={e=>setCidade(e.target.value)} style={iStyle} placeholder="Ex: Fortaleza" /></div>
             <div><label style={{ fontSize:11,color:"rgba(255,255,255,0.4)",letterSpacing:0.5 }}>BAIRRO</label><input value={bairro} onChange={e=>setBairro(e.target.value)} style={iStyle} placeholder="Ex: Centro" /></div>
           </div>
           <div style={{ display:"grid",gridTemplateColumns:"1fr 3fr",gap:12 }}>
@@ -3607,7 +3592,7 @@ function ModalFormCliente({ titulo, filiais, inicial, onSalvar, onFechar, salvan
         </div>
         <div style={{ display:"flex",gap:10,justifyContent:"flex-end",marginTop:24 }}>
           <button onClick={onFechar} style={{ background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#fff",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontSize:13 }}>Cancelar</button>
-          <button onClick={()=>onSalvar({codigo,nome,filial,cidade,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
+          <button onClick={()=>onSalvar({codigo,nome,filial,mensalidade:mens,bairro,area,custo_individual:parseFloat(custoIndividual)||CUSTO_FISCAL,meta_desl:parseInt(metaDesl)||0})} disabled={salvando||!codigo||!nome} style={{ background:"#38bdf8",border:"none",color:"#000",borderRadius:8,padding:"8px 18px",cursor:"pointer",fontWeight:700,fontSize:13,opacity:salvando||!codigo||!nome?0.6:1 }}>{salvando?"Salvando...":"Salvar"}</button>
         </div>
       </div>
     </div>
