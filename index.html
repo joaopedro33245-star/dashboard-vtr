@@ -181,11 +181,20 @@ function labelStatus(code) {
 
 async function fetchSegwareWindow(dataInicio, dataFim) {
   const url = SEGWARE_API+"?startDate="+encodeURIComponent(dataInicio.toISOString())+"&endDate="+encodeURIComponent(dataFim.toISOString());
-  const resp = await fetch(url, { method:"GET" });
-  if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
-  const json = await resp.json();
-  const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || json.content || []);
-  return lista;
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), 15000);
+  try {
+    const resp = await fetch(url, { method:"GET", signal:controller.signal });
+    clearTimeout(timer);
+    if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
+    const json = await resp.json();
+    const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || json.content || []);
+    return lista;
+  } catch(e) {
+    clearTimeout(timer);
+    if (e.name === "AbortError") throw new Error("Timeout — Segware demorou mais de 15s para responder");
+    throw e;
+  }
 }
 
 function segwareToDispatch(ev, filialPadrao) {
@@ -203,7 +212,7 @@ function segwareToDispatch(ev, filialPadrao) {
 }
 
 async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
-  diasAtras = diasAtras || 30;
+  diasAtras = diasAtras || 2;
   const token = getSegwareToken();
   if (!token) return { novos:0, erro:"Token não configurado. Adicione window._SEGWARE_TOKEN no config.js" };
   try {
@@ -217,18 +226,26 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
       cur = new Date(fim.getTime() + 1000);
     }
     let todos = [];
-    for (const jan of janelas) { const lote = await fetchSegwareWindow(jan.inicio, jan.fim); todos = todos.concat(lote); }
+    for (let i=0; i<janelas.length; i++) {
+      const jan = janelas[i];
+      if (window._segSyncSetMsg) window._segSyncSetMsg("Buscando janela "+(i+1)+" de "+janelas.length+"...");
+      try {
+        const lote = await fetchSegwareWindow(jan.inicio, jan.fim);
+        todos = todos.concat(lote);
+      } catch(e) {
+        console.warn("Janela "+i+" falhou:", e.message);
+      }
+    }
     if (todos.length === 0) return { novos:0, total:0, erro:null };
     const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
+    // Buscar só dispatches do mesmo período para deduplicar (muito mais rápido)
+    const dataInicioStr = inicio.toISOString();
+    const { data:ex } = await supabase.from("dispatches")
+      .select("codigo_cliente,filial,data_hora,evento,viatura")
+      .gte("created_at", dataInicioStr)
+      .limit(5000);
     const existentesSet = new Set();
-    let fromIdx = 0;
-    while (true) {
-      const { data:ex } = await supabase.from("dispatches").select("codigo_cliente,filial,data_hora,evento,viatura").range(fromIdx, fromIdx+999);
-      if (!ex || ex.length === 0) break;
-      for (const e of ex) existentesSet.add(e.codigo_cliente+"||"+e.filial+"||"+e.data_hora+"||"+e.evento+"||"+e.viatura);
-      if (ex.length < 1000) break;
-      fromIdx += 1000;
-    }
+    for (const e of (ex||[])) existentesSet.add(e.codigo_cliente+"||"+e.filial+"||"+e.data_hora+"||"+e.evento+"||"+e.viatura);
     const novos = dispatches.filter(d => !existentesSet.has(d.codigo_cliente+"||"+d.filial+"||"+d.data_hora+"||"+d.evento+"||"+d.viatura));
     if (novos.length > 0) {
       const paraInserir = novos.map(function(d){ const r={...d}; delete r._segware_id; return r; });
@@ -4039,7 +4056,8 @@ function App() {
     }
     setSegSyncStatus("syncing");
     setSegSyncMsg("Buscando deslocamentos na Segware…");
-    const result = await sincronizarSegware(supabaseClient, segFilial, 7);
+    window._segSyncSetMsg = setSegSyncMsg;
+    const result = await sincronizarSegware(supabaseClient, segFilial, 2);
     if (result.erro) {
       setSegSyncStatus("erro");
       setSegSyncMsg("Erro: " + result.erro);
