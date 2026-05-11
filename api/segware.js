@@ -13,21 +13,25 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: "SEGWARE_TOKEN não encontrado nas variáveis de ambiente" });
   }
 
-  // Limpa quebras de linha e espaços extras
   const tokenLimpo = token.replace(/[\r\n\t]+/g, '').trim();
-  
-  // Garante que começa com "Bearer "
   const tokenFinal = tokenLimpo.startsWith('Bearer ') ? tokenLimpo : 'Bearer ' + tokenLimpo;
 
-  const url = `https://api.segware.com.br/v1/occurrences?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`;
+  // v2 com parâmetros obrigatórios conforme Segware
+  const params = new URLSearchParams({
+    receptedDataType: "ALARM",
+    startDate: startDate,
+    endDate: endDate,
+    masterCompanyId: "6319"
+  });
+
+  const url = `https://api.segware.com.br/v2/occurrences?${params.toString()}`;
 
   try {
     const resp = await fetch(url, {
       method: "GET",
       headers: {
         "Authorization": tokenFinal,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "*/*"
       }
     });
 
@@ -40,8 +44,7 @@ export default async function handler(req, res) {
       return res.status(resp.status).json({
         error: `Status ${resp.status} — resposta não-JSON`,
         body: text.slice(0, 300),
-        url_chamada: url,
-        token_inicio: tokenFinal.substring(0, 20) + "..."
+        url_chamada: url
       });
     }
   } catch (e) {
