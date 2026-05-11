@@ -212,7 +212,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
     const janelas = [];
     let cur = new Date(inicio);
     while (cur < agora) {
-      const fim = new Date(Math.min(cur.getTime() + 30*86400000, agora.getTime()));
+      const fim = new Date(Math.min(cur.getTime() + 6*3600000, agora.getTime()));
       janelas.push({ inicio: new Date(cur), fim });
       cur = new Date(fim.getTime() + 1000);
     }
@@ -4039,7 +4039,7 @@ function App() {
     }
     setSegSyncStatus("syncing");
     setSegSyncMsg("Buscando deslocamentos na Segware…");
-    const result = await sincronizarSegware(supabaseClient, segFilial, 30);
+    const result = await sincronizarSegware(supabaseClient, segFilial, 7);
     if (result.erro) {
       setSegSyncStatus("erro");
       setSegSyncMsg("Erro: " + result.erro);
