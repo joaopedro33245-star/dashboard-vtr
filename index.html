@@ -2,6 +2,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -4080,14 +4081,16 @@ function App() {
   }
 
   useEffect(() => {
-    // token verificado pelo proxy
+    // Sync automatica so roda apos dados carregados e se houver token
     if (segSyncRef.current) clearInterval(segSyncRef.current);
-    const ms = Math.max(1, segAutoMin) * 60 * 1000;
+    if (!getSegwareToken() || loadingData) return;
+    const ms = Math.max(5, segAutoMin) * 60 * 1000;
+    // Nao executa imediatamente no mount, apenas no intervalo
     segSyncRef.current = setInterval(() => {
       executarSyncSegware();
     }, ms);
     return () => { if (segSyncRef.current) clearInterval(segSyncRef.current); };
-  }, [segAutoMin, segFilial]);
+  }, [segAutoMin, segFilial, loadingData]);
 
   useEffect(()=>{
     supabaseClient.auth.getSession().then(async({data:{session},error})=>{
