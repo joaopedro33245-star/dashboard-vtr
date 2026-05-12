@@ -3,6 +3,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -191,6 +192,8 @@ async function fetchSegwareWindow(dataInicio, dataFim) {
     if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
     const json = await resp.json();
     const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || json.content || []);
+    if(lista.length>0) console.log("[Segware] estrutura do 1o evento:", JSON.stringify(lista[0], null, 2));
+    else console.log("[Segware] resposta completa:", JSON.stringify(json, null, 2));
     return lista;
   } catch(e) {
     clearTimeout(timer);
