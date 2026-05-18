@@ -4,6 +4,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -167,7 +168,7 @@ const obsCache = new Map();
 //         4=IN_PLACE, 7=IN_PLACE_DONE
 // ═══════════════════════════════════════════════════════════════
 const SEGWARE_API    = "/api/segware";
-const SEGWARE_STATUS = [4];
+const SEGWARE_STATUS = [4]; // Apenas IN_PLACE — VTR saiu E chegou no local
 const SEG_CACHE_KEY  = "vtr_segware_ultima_sync";
 
 function getSegwareToken() { return (window._SEGWARE_TOKEN || "").trim(); }
@@ -242,7 +243,15 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
       }
     }
     if (todos.length === 0) return { novos:0, total:0, erro:null };
-    const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
+    // Filtrar apenas status IN_PLACE (4) — deslocamento confirmado no local
+    const filtrados = todos.filter(ev => {
+      const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
+      const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
+      const cod = Number(ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0));
+      return SEGWARE_STATUS.includes(cod);
+    });
+    if (filtrados.length === 0) return { novos:0, total:todos.length, filtrados:0, erro:null };
+    const dispatches = filtrados.map(ev => segwareToDispatch(ev, filialPadrao));
     // Buscar só dispatches do mesmo período para deduplicar (muito mais rápido)
     const dataInicioStr = inicio.toISOString();
     const { data:ex } = await supabase.from("dispatches")
@@ -260,7 +269,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
       }
     }
     try { localStorage.setItem(SEG_CACHE_KEY, new Date().toISOString()); } catch {}
-    return { novos:novos.length, total:todos.length, erro:null };
+    return { novos:novos.length, total:todos.length, filtrados:filtrados.length, erro:null };
   } catch(e) { return { novos:0, erro:e.message }; }
 }
 
@@ -4029,6 +4038,7 @@ function App() {
   const [segUltimaSync,setSegUltimaSync]=useState(()=>getUltimaSyncSegware());
   const [segAutoMin,setSegAutoMin]=useState(15); // intervalo em minutos
   const [segFilial,setSegFilial]=useState("SEGWARE"); // filial padrão para novos registros
+  const [segDiasAtras,setSegDiasAtras]=useState(2); // quantos dias atrás buscar
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
@@ -4062,7 +4072,7 @@ function App() {
     setSegSyncStatus("syncing");
     setSegSyncMsg("Buscando deslocamentos na Segware…");
     window._segSyncSetMsg = setSegSyncMsg;
-    const result = await sincronizarSegware(supabaseClient, segFilial, 2);
+    const result = await sincronizarSegware(supabaseClient, segFilial, segDiasAtras);
     if (result.erro) {
       setSegSyncStatus("erro");
       setSegSyncMsg("Erro: " + result.erro);
@@ -4070,12 +4080,17 @@ function App() {
       setSegSyncStatus("ok");
       const ts = getUltimaSyncSegware();
       setSegUltimaSync(ts);
-      setSegSyncMsg(
-        result.novos > 0
-          ? "✅ " + result.novos + " novos deslocamentos importados!"
-          : "✅ Sincronizado — nenhum dado novo (total analisado: " + (result.total||0) + ")"
-      );
-      if (result.novos > 0) {
+      const totalBruto = result.total || 0;
+      const filtrados = result.filtrados || 0;
+      const novos = result.novos || 0;
+      if (novos > 0) {
+        setSegSyncMsg("✅ " + novos + " novos deslocamentos IN_PLACE importados! ("+filtrados+" com status 4 de "+totalBruto+" eventos brutos)");
+      } else if (filtrados === 0 && totalBruto > 0) {
+        setSegSyncMsg("⚠️ "+totalBruto+" eventos recebidos mas nenhum com status IN_PLACE (4). Verifique os eventos no console (F12).");
+      } else {
+        setSegSyncMsg("✅ Sincronizado — nenhum dado novo ("+filtrados+" IN_PLACE de "+totalBruto+" eventos)");
+      }
+      if (novos > 0) {
         try { localStorage.removeItem("vtr_dados_cache"); } catch {}
         await carregarDados(true);
       }
@@ -4134,8 +4149,14 @@ function App() {
 
   async function fetchAll(table,order,ascending=true){
     let all=[],from=0;const PAGE=1000;
+    // Para dispatches: limita aos últimos 90 dias para evitar timeout
+    const filtroData = table==="dispatches"
+      ? new Date(Date.now() - 90*24*3600000).toISOString().slice(0,10)  // YYYY-MM-DD
+      : null;
     while(true){
-      const{data,error}=await supabaseClient.from(table).select("*").order(order,{ascending}).range(from,from+PAGE-1);
+      let q = supabaseClient.from(table).select("*").order(order,{ascending}).range(from,from+PAGE-1);
+      if(filtroData) q = q.gte("created_at", filtroData);
+      const{data,error}=await q;
       if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
       if(!data||data.length===0)break;
       all=all.concat(data);
@@ -4436,7 +4457,7 @@ function App() {
             </div>
           )}
 
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:16 }}>
             {/* Filial padrão */}
             <div>
               <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Filial padrão para novos registros</label>
@@ -4458,6 +4479,19 @@ function App() {
                   style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none" }}
                 />
                 <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)" }}>minutos</span>
+              </div>
+            </div>
+            {/* Dias atrás */}
+            <div>
+              <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Buscar eventos dos últimos</label>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <input
+                  type="number" min="1" max="30"
+                  value={segDiasAtras}
+                  onChange={e=>setSegDiasAtras(Math.max(1,Math.min(30,parseInt(e.target.value)||2)))}
+                  style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none" }}
+                />
+                <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)" }}>dias</span>
               </div>
             </div>
           </div>
@@ -4487,7 +4521,7 @@ function App() {
             </button>
           </div>
           <div style={{ marginTop:10, fontSize:10, color:"rgba(255,255,255,0.2)", lineHeight:1.5 }}>
-            Busca os últimos 30 dias na API Segware · Filtra status DISPLACEMENT (2), DISPLACEMENT_STARTED (3), IN_PLACE (4), IN_PLACE_DONE (7) · Evita duplicatas automaticamente
+            Filtra apenas IN_PLACE (status 4) — VTR saiu e chegou no local · Evita duplicatas automaticamente · Máx. 90 dias no dashboard
           </div>
         </div>
       )}
