@@ -1,14 +1,11 @@
 {
   "rewrites": [
-    { "source": "/config.js", "destination": "/api/config.js" }
+    { "source": "/config.js", "destination": "/api/config" }
   ],
-  "headers": [
+  "crons": [
     {
-      "source": "/api/config.js",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache" },
-        { "key": "X-Content-Type-Options", "value": "nosniff" }
-      ]
+      "path": "/api/cron-segware",
+      "schedule": "0 */3 * * *"
     }
   ]
 }
