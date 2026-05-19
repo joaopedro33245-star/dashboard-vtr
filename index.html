@@ -3453,14 +3453,11 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
     const{error}=await query;
     setSalvando(false);
     if(!error){
-      setClients(prev=>prev.map(c=>{
-        const match=(editando.id&&c.id===editando.id)||(!editando.id&&c.codigo_cliente===editando.codigo_cliente&&c.filial===(editando.filial_original||editando.filial));
-        return match?{...c,...payload}:c;
-      }));
       setEditando(null);
       setMsgSalvo("✅ Cliente atualizado!");
       setTimeout(()=>setMsgSalvo(""),4000);
       try{localStorage.removeItem("vtr_dados_cache");}catch{}
+      if(typeof onRefresh==="function") onRefresh();
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
     }
