@@ -4098,17 +4098,8 @@ function App() {
     setTimeout(() => setSegSyncStatus(s => s==="ok"?"idle":s), 8000);
   }
 
-  useEffect(() => {
-    // Sync automatica so roda apos dados carregados e se houver token
-    if (segSyncRef.current) clearInterval(segSyncRef.current);
-    if (!getSegwareToken() || loadingData) return;
-    const ms = Math.max(5, segAutoMin) * 60 * 1000;
-    // Nao executa imediatamente no mount, apenas no intervalo
-    segSyncRef.current = setInterval(() => {
-      executarSyncSegware();
-    }, ms);
-    return () => { if (segSyncRef.current) clearInterval(segSyncRef.current); };
-  }, [segAutoMin, segFilial, loadingData]);
+  // Sync automático desabilitado no frontend — o Vercel Cron cuida disso de 3 em 3 horas
+  // useEffect removido intencionalmente
 
   useEffect(()=>{
     supabaseClient.auth.getSession().then(async({data:{session},error})=>{
@@ -4148,20 +4139,25 @@ function App() {
   },[usuario]);
 
   async function fetchAll(table,order,ascending=true){
-    let all=[],from=0;const PAGE=1000;
-    // Para dispatches: limita aos últimos 90 dias para evitar timeout
+    let all=[],from=0;const PAGE=1000;const MAX=5000;
+    // Para dispatches: limita aos últimos 30 dias e máx 5000 registros
     const filtroData = table==="dispatches"
-      ? new Date(Date.now() - 90*24*3600000).toISOString().slice(0,10)  // YYYY-MM-DD
+      ? new Date(Date.now() - 30*24*3600000).toISOString().slice(0,10)
       : null;
     while(true){
-      let q = supabaseClient.from(table).select("*").order(order,{ascending}).range(from,from+PAGE-1);
-      if(filtroData) q = q.gte("created_at", filtroData);
+      let q = supabaseClient.from(table).select("*").range(from,from+PAGE-1);
+      if(filtroData) {
+        q = q.order("created_at",{ascending:false}).gte("created_at", filtroData);
+      } else {
+        q = q.order(order,{ascending});
+      }
       const{data,error}=await q;
       if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
       if(!data||data.length===0)break;
       all=all.concat(data);
       if(data.length<PAGE)break;
       from+=PAGE;
+      if(all.length>=MAX)break;
     }
     return all;
   }
