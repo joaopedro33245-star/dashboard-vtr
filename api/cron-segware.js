@@ -9,7 +9,7 @@
  *  - Insere apenas registros novos no Supabase (deduplicação automática)
  */
 
-import { createClient } from "@supabase/supabase-js";
+const { createClient } = require("@supabase/supabase-js");
 
 // ── Normalização de filial (espelha a função limparEmpresa do index.html) ──
 const ALIAS_FILIAL = {
@@ -94,7 +94,7 @@ async function fetchJanela(tokenFinal, dataInicio, dataFim) {
 }
 
 // ── Handler principal ──────────────────────────────────────────────────────
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
 
   // Segurança: só aceita o Vercel Cron ou chamada com CRON_SECRET
   const authHeader = req.headers["authorization"] || "";
@@ -167,12 +167,14 @@ export default async function handler(req, res) {
   const portariaCount    = dispatches.filter(d => d.portaria_inteligente).length;
   const normalCount      = dispatches.length - portariaCount;
 
-  // Deduplicar
-  const { data: existentes } = await supabase
+  // Deduplicar — busca só os últimos 3 dias para ser rápido
+  const { data: existentes, error: errDedup } = await supabase
     .from("dispatches")
     .select("codigo_cliente,filial,data_hora,evento,viatura")
     .gte("created_at", inicio.toISOString())
-    .limit(5000);
+    .limit(2000);
+  // Se der timeout na deduplicação, insere tudo (Supabase vai rejeitar duplicatas pela constraint)
+  if (errDedup) console.warn("Aviso dedup:", errDedup.message);
 
   const existentesSet = new Set();
   for (const e of (existentes || [])) {
