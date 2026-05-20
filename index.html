@@ -4946,11 +4946,13 @@ END $$;`;
   const getEvo = (conta, empresa, ci) => {
     if(ci===0) return {label:'base',cls:'gray',k:'base'};
     const norm = (s)=>(s||'').toLowerCase().trim();
-    const match = (r) => norm(r.conta)===norm(conta) && (
-      norm(r.empresa)===norm(empresa) ||
-      norm(r.empresa).includes(norm(empresa)) ||
-      norm(empresa).includes(norm(r.empresa))
-    );
+    const nc = norm(conta);
+    const ne = norm(empresa);
+    const match = (r) => {
+      const rc = norm(r.conta);
+      const re = norm(r.empresa);
+      return rc===nc && (re===ne || re.includes(ne) || ne.includes(re));
+    };
     const p = weeks[ci-1].rows.find(match);
     const c = weeks[ci].rows.find(match);
     if(!p) return {label:'novo',cls:'blue',k:'novo'};
@@ -5015,8 +5017,11 @@ END $$;`;
           }
           for(let i=sr;i<data.length;i++){
             const r=data[i];
-            const emp=String(r[colEmp]||'').trim(),cont=String(r[colCont]||'').trim(),cli=String(r[colCli]||'').trim();
-            const evs=parseInt(String(r[colEvt]||'0').replace(/\D/g,''))||0;
+            const emp=String(r[colEmp]||'').trim();
+            const cont=String(r[colCont]||'').trim();
+            const cli=String(r[colCli]||'').trim();
+            const evtRaw=String(r[colEvt]||'0').replace(/[^\d]/g,'');
+            const evs=parseInt(evtRaw)||0;
             if(emp&&cont&&cli) rows.push({conta:cont,cliente:cli,empresa:emp,eventos:evs});
           }
         });
@@ -5554,7 +5559,9 @@ END $$;`;
                 const evo=hp?getEvo(r.conta,r.empresa,cw):null;
                 const pv=hp?prevRows.find(p=>{
                   const nc=(s)=>(s||'').toLowerCase().trim();
-                  return nc(p.conta)===nc(r.conta)&&(nc(p.empresa)===nc(r.empresa)||nc(p.empresa).includes(nc(r.empresa))||nc(r.empresa).includes(nc(p.empresa)));
+                  const rc=nc(r.conta), re=nc(r.empresa);
+                  const pc=nc(p.conta), pe=nc(p.empresa);
+                  return pc===rc&&(pe===re||pe.includes(re)||re.includes(pe));
                 }):null;
                 const isPI=(r.cliente||'').toUpperCase().includes('PORTARIA');
                 return(
