@@ -4786,14 +4786,24 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const chartInst = React.useRef(null);
   const PS = 15;
 
-  // Carrega semanas salvas do Supabase ao montar
+  // Carrega semanas salvas do Supabase ao montar e completa com Base Ativa
   React.useEffect(()=>{
     (async()=>{
       const dados = await sbCarregarSemanas(supabaseClient);
       if(dados && dados.length > 0) {
-        console.log('[Semanas] Carregadas do Supabase:', dados.map(w=>w.label+':'+w.rows.length));
-        setWeeks(dados);
-        setCw(dados.length - 1);
+        // Completar cada semana com clientes ausentes da Base Ativa (0 eventos)
+        let baseAtiva = [];
+        try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
+        const completadas = dados.map(w => {
+          const contasRelatorio = new Set(w.rows.map(r=>(r.conta||'').toLowerCase().trim()));
+          const ausentes = baseAtiva
+            .filter(b => !contasRelatorio.has((b.conta||'').toLowerCase().trim()))
+            .map(b => ({conta:(b.conta||'').trim(), empresa:(b.empresa||'').trim(), cliente:(b.cliente||'').trim(), eventos:0}));
+          return { label: w.label, rows: [...w.rows, ...ausentes] };
+        });
+        console.log('[Semanas] Carregadas:', completadas.map(w=>w.label+':'+w.rows.length));
+        setWeeks(completadas);
+        setCw(completadas.length - 1);
       }
     })();
   }, [supabaseClient]);
@@ -5088,9 +5098,10 @@ END $$;`;
     if(novos.length > 0){ setNovosClientes(novos); setShowNovos(true); }
     else{ setNovosClientes([]); setShowNovos(false); }
 
-    // Salva no Supabase
-    sbSalvarSemana(supabaseClient, label, rowsCompletos).then(ok=>{
-      console.log('[Semana] Supabase:', ok ? 'ok' : 'falhou');
+    // Salva no Supabase APENAS os rows do relatório (sem os ausentes da Base Ativa)
+    // Os ausentes são calculados dinamicamente — evita salvar 5k registros por semana
+    sbSalvarSemana(supabaseClient, label, rowsNorm).then(ok=>{
+      console.log('[Semana] Supabase:', ok ? 'ok' : 'falhou', '| Salvos:', rowsNorm.length);
     });
 
     setWeeks(prev=>{
