@@ -4763,6 +4763,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const [weeks,  setWeeks]  = React.useState([]);       // começa vazio
   const [cw,     setCw]     = React.useState(0);
   const [tab,    setTab]    = React.useState('c');
+  const [abaMain, setAbaMain] = React.useState('lista'); // 'lista' | 'migracoes'
   const [search, setSearch] = React.useState('');
   const [empFil, setEmpFil] = React.useState('');
   const [evof,   setEvof]   = React.useState('');
@@ -4947,16 +4948,10 @@ END $$;`;
   // Cruzamento por conta + empresa (filial)
   const getEvo = (conta, empresa, ci) => {
     if(ci===0) return {label:'base',cls:'gray',k:'base'};
-    const norm = (s)=>(s||'').toLowerCase().trim();
-    const nc = norm(conta);
-    const ne = norm(empresa);
-    const match = (r) => {
-      const rc = norm(r.conta);
-      const re = norm(r.empresa);
-      return rc===nc && (re===ne || re.includes(ne) || ne.includes(re));
-    };
-    const p = weeks[ci-1].rows.find(match);
-    const c = weeks[ci].rows.find(match);
+    const nc = (conta||'').toLowerCase().trim();
+    // Cruzamento por conta apenas — empresa já está normalizada no mesmo formato
+    const p = weeks[ci-1].rows.find(r => (r.conta||'').toLowerCase().trim()===nc);
+    const c = weeks[ci].rows.find(r => (r.conta||'').toLowerCase().trim()===nc);
     if(!p) return {label:'novo',cls:'blue',k:'novo'};
     const ps=clsF(p.eventos), cs=clsF(c?c.eventos:0);
     const o={c:3,a:2,s:1};
@@ -4989,7 +4984,18 @@ END $$;`;
     if(cw===0||weeks.length<2) return null;
     const pp=getTotals(weeks[cw-1].rows), cp=getTotals(weeks[cw].rows);
     const mv={pc:0,pa:0,mc:0,ma:0,ms:0,mels:0,mela:0,novo:0};
-    weeks[cw].rows.forEach(r=>{const e=getEvo(r.conta,r.empresa,cw);if(mv[e.k]!==undefined)mv[e.k]++;});
+    // Cruzar por conta apenas
+    const s1idx = {};
+    weeks[cw-1].rows.forEach(r=>{ s1idx[(r.conta||'').toLowerCase().trim()] = r; });
+    weeks[cw].rows.forEach(r=>{
+      const nc=(r.conta||'').toLowerCase().trim();
+      if(!s1idx[nc]){mv.novo++;return;}
+      const ps=clsF(s1idx[nc].eventos), cs=clsF(r.eventos);
+      const o={c:3,a:2,s:1};
+      if(ps===cs){if(cs==='c')mv.mc++;else if(cs==='a')mv.ma++;else mv.ms++;}
+      else if(o[cs]>o[ps]){if(cs==='c')mv.pc++;else mv.pa++;}
+      else{if(cs==='s')mv.mels++;else mv.mela++;}
+    });
     return {pp,cp,mv};
   };
 
@@ -5055,34 +5061,78 @@ END $$;`;
   const confirmarImport = async (label, rows) => {
     setImportPending(null);
 
-    // Cruzar com Base Ativa
     let baseAtiva = [];
     try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
     const normStr = s => (s||'').toLowerCase().trim();
-    const novos = rows.filter(r =>
-      !baseAtiva.some(b =>
-        normStr(b.conta)===normStr(r.conta) &&
-        (normStr(b.empresa)===normStr(r.empresa) ||
-         normStr(b.empresa).includes(normStr(r.empresa)) ||
-         normStr(r.empresa).includes(normStr(b.empresa)))
-      )
+
+    // Clientes do relatório (com trim nas contas)
+    const rowsNorm = rows.map(r=>({...r, conta:(r.conta||'').trim(), empresa:(r.empresa||'').trim()}));
+    const contasImport = new Set(rowsNorm.map(r=>normStr(r.conta)));
+
+    // PONTO 1: Adicionar clientes da Base Ativa com 0 eventos (ausentes no relatório)
+    const ausentes = baseAtiva
+      .filter(b => !contasImport.has(normStr(b.conta)))
+      .map(b => ({
+        conta:   (b.conta  ||'').trim(),
+        empresa: (b.empresa||'').trim(),
+        cliente: (b.cliente||'').trim(),
+        eventos: 0
+      }));
+    const rowsCompletos = [...rowsNorm, ...ausentes];
+    console.log('[Import] Relatório:', rowsNorm.length, '| Base Ativa ausentes:', ausentes.length, '| Total:', rowsCompletos.length);
+
+    // Clientes no relatório que não estão na Base Ativa
+    const novos = rowsNorm.filter(r =>
+      !baseAtiva.some(b => normStr(b.conta)===normStr(r.conta))
     );
     if(novos.length > 0){ setNovosClientes(novos); setShowNovos(true); }
     else{ setNovosClientes([]); setShowNovos(false); }
 
     // Salva no Supabase
-    sbSalvarSemana(supabaseClient, label, rows).then(ok=>{
+    sbSalvarSemana(supabaseClient, label, rowsCompletos).then(ok=>{
       console.log('[Semana] Supabase:', ok ? 'ok' : 'falhou');
     });
 
     setWeeks(prev=>{
       const ei=prev.findIndex(w=>w.label===label);
       let nw;
-      if(ei>=0){nw=[...prev];nw[ei]={label,rows};setCw(ei);}
-      else{nw=[...prev,{label,rows}];setCw(nw.length-1);}
+      if(ei>=0){nw=[...prev];nw[ei]={label,rows:rowsCompletos};setCw(ei);}
+      else{nw=[...prev,{label,rows:rowsCompletos}];setCw(nw.length-1);}
       return nw;
     });
     setTab('c');setPage(0);setSearch('');setEmpFil('');setEvof('');setSoloPI(false);
+  };
+
+  const getMigracoes = () => {
+    if(!weeks.length || weeks.length < 2) return [];
+    const prev = weeks[cw > 0 ? cw-1 : 0];
+    const curr = weeks[cw];
+    if(cw === 0) return [];
+    const s1idx = {};
+    prev.rows.forEach(r=>{ s1idx[(r.conta||'').toLowerCase().trim()] = r; });
+    const result = [];
+    curr.rows.forEach(r => {
+      const nc = (r.conta||'').toLowerCase().trim();
+      const p = s1idx[nc];
+      if(!p) return;
+      const ps = clsF(p.eventos), cs = clsF(r.eventos);
+      if(ps !== cs) {
+        const order = {c:3,a:2,s:1};
+        const direcao = order[cs] < order[ps] ? 'melhora' : 'piora';
+        result.push({
+          conta: r.conta, cliente: r.cliente, empresa: r.empresa,
+          eventosAnt: p.eventos, eventosAtu: r.eventos,
+          classeAnt: ps, classeAtu: cs, direcao,
+          semanaAnt: prev.label, semanaAtu: curr.label,
+        });
+      }
+    });
+    // Ordenar: pioras primeiro, depois melhoras; dentro de cada grupo por eventos
+    result.sort((a,b) => {
+      if(a.direcao !== b.direcao) return a.direcao==='piora'?-1:1;
+      return b.eventosAtu - a.eventosAtu;
+    });
+    return result;
   };
 
   const limpar=async()=>{
@@ -5579,6 +5629,93 @@ END $$;`;
         </div>
       </div>
 
+      {/* Navegação principal: Lista | Migrações */}
+      {hp&&<div style={{display:'flex',gap:6,marginBottom:16}}>
+        <button onClick={()=>setAbaMain('lista')}
+          style={{padding:'7px 18px',borderRadius:10,border:'1px solid',fontSize:13,cursor:'pointer',fontWeight:abaMain==='lista'?700:400,
+            borderColor:abaMain==='lista'?'#a78bfa':'rgba(255,255,255,0.12)',
+            background:abaMain==='lista'?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',
+            color:abaMain==='lista'?'#a78bfa':'rgba(255,255,255,0.4)'}}>
+          Lista de clientes
+        </button>
+        <button onClick={()=>setAbaMain('migracoes')}
+          style={{padding:'7px 18px',borderRadius:10,border:'1px solid',fontSize:13,cursor:'pointer',fontWeight:abaMain==='migracoes'?700:400,
+            borderColor:abaMain==='migracoes'?'#fbbf24':'rgba(255,255,255,0.12)',
+            background:abaMain==='migracoes'?'rgba(251,191,36,0.12)':'rgba(255,255,255,0.04)',
+            color:abaMain==='migracoes'?'#fbbf24':'rgba(255,255,255,0.4)'}}>
+          Migrações {hp&&<span style={{background:'rgba(251,191,36,0.15)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{getMigracoes().length}</span>}
+        </button>
+      </div>}
+
+      {abaMain==='migracoes'&&hp&&(()=>{
+        const migs = getMigracoes();
+        const pioras  = migs.filter(m=>m.direcao==='piora');
+        const melhoras = migs.filter(m=>m.direcao==='melhora');
+        const clsLabel = k => k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
+        const clsColor = k => k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
+        return(
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+              <div style={{background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:14,padding:'14px 18px'}}>
+                <div style={{fontSize:11,color:'#f87171',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Pioraram de categoria</div>
+                <div style={{fontSize:28,fontWeight:700,color:'#f87171'}}>{pioras.length}</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginTop:4}}>{weeks[cw-1].label} → {weeks[cw].label}</div>
+              </div>
+              <div style={{background:'rgba(52,211,153,0.06)',border:'1px solid rgba(52,211,153,0.2)',borderRadius:14,padding:'14px 18px'}}>
+                <div style={{fontSize:11,color:'#34d399',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Melhoraram de categoria</div>
+                <div style={{fontSize:28,fontWeight:700,color:'#34d399'}}>{melhoras.length}</div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginTop:4}}>{weeks[cw-1].label} → {weeks[cw].label}</div>
+              </div>
+            </div>
+            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
+              <div className="table-scroll">
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
+                  <colgroup><col style={{width:90}}/><col/><col style={{width:130}}/><col style={{width:80}}/><col style={{width:80}}/><col style={{width:85}}/><col style={{width:160}}/></colgroup>
+                  <thead>
+                    <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+                      {['Conta','Cliente','Empresa','Evt ant.','Evt atu.','Direção','Migração'].map(h=>(
+                        <th key={h} style={{padding:'9px 12px',textAlign:h==='Evt ant.'||h==='Evt atu.'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.06em'}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {migs.length===0&&<tr><td colSpan={7} style={{padding:24,textAlign:'center',color:'rgba(255,255,255,0.2)',fontSize:13}}>Nenhuma migração encontrada</td></tr>}
+                    {migs.map((m,i)=>(
+                      <tr key={i} onClick={()=>setModal({conta:m.conta,cliente:m.cliente,empresa:m.empresa,eventos:m.eventosAtu})}
+                        style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)',cursor:'pointer'}}
+                        onMouseEnter={e=>e.currentTarget.style.background='rgba(167,139,250,0.06)'}
+                        onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':'rgba(255,255,255,0.015)'}>
+                        <td style={{padding:'8px 12px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{m.conta}</td>
+                        <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={m.cliente}>{m.cliente}</td>
+                        <td style={{padding:'8px 12px',fontSize:11,color:'rgba(255,255,255,0.35)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(m.empresa||'').replace(/^\d+\.\s/,'')}</td>
+                        <td style={{padding:'8px 12px',textAlign:'right',color:'rgba(255,255,255,0.4)',fontSize:12}}>{m.eventosAnt.toLocaleString('pt-BR')}</td>
+                        <td style={{padding:'8px 12px',textAlign:'right',fontWeight:700,color:'#fff'}}>{m.eventosAtu.toLocaleString('pt-BR')}</td>
+                        <td style={{padding:'8px 12px'}}>
+                          <span style={{background:m.direcao==='piora'?'rgba(239,68,68,0.15)':'rgba(52,211,153,0.15)',color:m.direcao==='piora'?'#f87171':'#34d399',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:600}}>
+                            {m.direcao==='piora'?'↓ Piorou':'↑ Melhorou'}
+                          </span>
+                        </td>
+                        <td style={{padding:'8px 12px'}}>
+                          <span style={{fontSize:11}}>
+                            <span style={{color:clsColor(m.classeAnt),fontWeight:600}}>{clsLabel(m.classeAnt)}</span>
+                            <span style={{color:'rgba(255,255,255,0.3)',margin:'0 4px'}}>→</span>
+                            <span style={{color:clsColor(m.classeAtu),fontWeight:600}}>{clsLabel(m.classeAtu)}</span>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pgn">
+                <span className="pgn-info">{migs.length} migração{migs.length!==1?'ões':''} encontrada{migs.length!==1?'s':''}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {abaMain==='lista'&&<React.Fragment>
       {/* Tabs + portaria */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
         <div style={{display:'flex',gap:4}}>
@@ -5642,12 +5779,7 @@ END $$;`;
               {pageRows.length===0&&<tr><td colSpan={hp?6:4} style={{padding:28,textAlign:'center',color:'rgba(255,255,255,0.15)',fontSize:13}}>Nenhum cliente encontrado</td></tr>}
               {pageRows.map((r,i)=>{
                 const evo=hp?getEvo(r.conta,r.empresa,cw):null;
-                const pv=hp?prevRows.find(p=>{
-                  const nc=(s)=>(s||'').toLowerCase().trim();
-                  const rc=nc(r.conta), re=nc(r.empresa);
-                  const pc=nc(p.conta), pe=nc(p.empresa);
-                  return pc===rc&&(pe===re||pe.includes(re)||re.includes(pe));
-                }):null;
+                const pv=hp?prevRows.find(p=>(p.conta||'').toLowerCase().trim()===(r.conta||'').toLowerCase().trim()):null;
                 const isPI=(r.cliente||'').toUpperCase().includes('PORTARIA');
                 return(
                   <tr key={i} onClick={()=>setModal(r)}
@@ -5679,6 +5811,7 @@ END $$;`;
           <button className="pgn-btn" disabled={start+PS>=tabRows.length} onClick={()=>setPage(p=>p+1)}>&#8594;</button>
         </div>
       </div>
+      </React.Fragment>}
     </div>
   );
 }
