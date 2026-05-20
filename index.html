@@ -4199,7 +4199,7 @@ function BaseAtivaTab({supabaseClient}) {
           const ws = wb.Sheets[name];
           const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
           let sr = 0;
-          let colMap = {empresa:0,conta:1,cliente:2,mensalidade:3,status:4,area:5};
+          let colMap = {empresa:0,conta:1,cliente:2,mensalidade:3,status:4,area:5,cidade:-1,bairro:-1};
           for(let i=0; i<Math.min(5,data.length); i++) {
             const v = data[i].map((x,idx)=>({val:String(x||'').toLowerCase(),idx}));
             const hasHeader = v.some(x=>x.val.includes('empresa')||x.val.includes('conta')||x.val.includes('cliente')||x.val.includes('fantasia'));
@@ -4212,6 +4212,8 @@ function BaseAtivaTab({supabaseClient}) {
                 else if(val.includes('mensalidade')||val.includes('mensal')) colMap.mensalidade=idx;
                 else if(val.includes('status')) colMap.status=idx;
                 else if(val.includes('area')||val.includes('\u00e1rea')) colMap.area=idx;
+                else if(val.includes('cidade')||val.includes('city')) colMap.cidade=idx;
+                else if(val.includes('bairro')||val.includes('distrito')) colMap.bairro=idx;
               });
               break;
             }
@@ -4221,10 +4223,12 @@ function BaseAtivaTab({supabaseClient}) {
             const emp  = String(r[colMap.empresa]||'').trim();
             const cont = String(r[colMap.conta]||'').trim();
             const cli  = String(r[colMap.cliente]||'').trim();
-            const mens = String(r[colMap.mensalidade]||'').trim();
-            const stat = String(r[colMap.status]||'Ativo').trim();
-            const area = String(r[colMap.area]||'').trim();
-            if(emp&&cont&&cli) rows.push({empresa:emp,conta:cont,cliente:cli,mensalidade:mens,status:stat,area});
+            const mens   = String(r[colMap.mensalidade]||'').trim();
+            const stat   = String(r[colMap.status]||'Ativo').trim();
+            const area   = String(r[colMap.area]||'').trim();
+            const cidade = colMap.cidade>=0 ? String(r[colMap.cidade]||'').trim() : '';
+            const bairro = colMap.bairro>=0 ? String(r[colMap.bairro]||'').trim() : '';
+            if(emp&&cont&&cli) rows.push({empresa:emp,conta:cont,cliente:cli,mensalidade:mens,status:stat,area,cidade,bairro});
           }
         });
         if(!rows.length){setMsg('Nenhum dado encontrado');return;}
@@ -4305,6 +4309,7 @@ function BaseAtivaTab({supabaseClient}) {
               ['Ativos',baseRows.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],
               ['Com mensalidade',baseRows.filter(r=>r.mensalidade&&r.mensalidade!=='0'&&r.mensalidade!=='').length,'#fbbf24'],
               ['Portaria',baseRows.filter(r=>(r.cliente||'').toUpperCase().includes('PORTARIA')).length,'#a78bfa'],
+              ['Cidades',[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].length,'#06b6d4'],
             ].map(([l,v,c])=>(
               <div key={l} style={{borderRadius:14,padding:'14px 18px',border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.03)'}}>
                 <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
@@ -4325,12 +4330,13 @@ function BaseAtivaTab({supabaseClient}) {
             <div className="table-scroll">
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
                 <colgroup>
-                  <col style={{width:95}}/><col/><col style={{width:130}}/>
-                  <col style={{width:110}}/><col style={{width:80}}/><col style={{width:90}}/>
+                  <col style={{width:90}}/><col/><col style={{width:120}}/>
+                  <col style={{width:100}}/><col style={{width:75}}/><col style={{width:85}}/>
+                  <col style={{width:100}}/><col style={{width:100}}/>
                 </colgroup>
                 <thead>
                   <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Mensalidade','Status','\u00c1rea'].map(h=>(
+                    {['Conta','Cliente','Empresa','Mensalidade','Status','\u00c1rea','Cidade','Bairro'].map(h=>(
                       <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
                     ))}
                   </tr>
@@ -4348,6 +4354,8 @@ function BaseAtivaTab({supabaseClient}) {
                         </span>
                       </td>
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.area||'—'}</td>
+                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.5)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cidade}>{r.cidade||'—'}</td>
+                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.bairro}>{r.bairro||'—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4607,6 +4615,8 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
                   ['Mensalidade',infoBase?.mensalidade||'N\u00e3o cadastrado',null],
                   ['Status',infoBase?.status||'N\u00e3o cadastrado',null],
                   ['\u00c1rea',infoBase?.area||'N\u00e3o cadastrado',null],
+                  ['Cidade',infoBase?.cidade||'N\u00e3o cadastrado',null],
+                  ['Bairro',infoBase?.bairro||'N\u00e3o cadastrado',null],
                 ].map(([l,v,ff])=>(
                   <div key={l} style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 14px',border:'1px solid rgba(255,255,255,0.06)'}}>
                     <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:5}}>{l}</div>
