@@ -4320,7 +4320,7 @@ function BaseAtivaTab({supabaseClient}) {
                 else if(val.includes('cliente')||val.includes('fantasia')) colMap.cliente=idx;
                 else if(val.includes('mensalidade')||val.includes('mensal')) colMap.mensalidade=idx;
                 else if(val.includes('status')) colMap.status=idx;
-                else if(val.includes('area')||val.includes('\u00e1rea')) colMap.area=idx;
+                else if(val.includes('area')||val.includes('área')) colMap.area=idx;
                 else if(val.includes('cidade')||val.includes('city')) colMap.cidade=idx;
                 else if(val.includes('bairro')||val.includes('distrito')) colMap.bairro=idx;
               });
@@ -4451,7 +4451,7 @@ function BaseAtivaTab({supabaseClient}) {
                 </colgroup>
                 <thead>
                   <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Mensalidade','Status','\u00c1rea','Cidade','Bairro'].map(h=>(
+                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro'].map(h=>(
                       <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
                     ))}
                   </tr>
@@ -4555,7 +4555,7 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
 
   const clsF=(e)=>e>10?'c':e>=6?'a':'s';
   const clsColor=(k)=>k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
-  const clsLabel=(k)=>k==='c'?'Cr\u00edtico':k==='a'?'Aten\u00e7\u00e3o':'Saud\u00e1vel';
+  const clsLabel=(k)=>k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
   const cls=clsF(cliente.eventos); const cor=clsColor(cls);
 
   // Deslocamentos cruzados por conta + empresa
@@ -4646,7 +4646,7 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
                     <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                       <thead>
                         <tr style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-                          {['Data','T\u00e9cnico','Tipo','Status','Obs.'].map(h=>(
+                          {['Data','Técnico','Tipo','Status','Obs.'].map(h=>(
                             <th key={h} style={{padding:'8px 12px',textAlign:'left',color:'rgba(255,255,255,0.28)',fontSize:10,textTransform:'uppercase',letterSpacing:'.05em',background:'rgba(255,255,255,0.02)'}}>{h}</th>
                           ))}
                         </tr>
@@ -4677,7 +4677,7 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
               <div style={{marginBottom:20}}>
                 <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em'}}>Nova tratativa</div>
                 <textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3}
-                  placeholder="Descreva a tratativa realizada, contato com o cliente, pr\u00f3ximos passos..."
+                  placeholder="Descreva a tratativa realizada, contato com o cliente, próximos passos..."
                   style={{...inp,marginBottom:8}}/>
                 {msg&&<div style={{marginBottom:8,fontSize:12,color:isOk?'#34d399':'#f87171'}}>{isOk?'✅ ':''}{msgText}</div>}
                 <div style={{display:'flex',alignItems:'center',gap:10}}>
@@ -4726,12 +4726,12 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
                   ['Empresa',(cliente.empresa||'').replace(/^\d+\.\s/,''),null],
                   ['Filial completa',cliente.empresa,null],
                   ['Eventos esta semana',cliente.eventos.toLocaleString('pt-BR'),null],
-                  ['Classifica\u00e7\u00e3o',clsLabel(clsF(cliente.eventos)),null],
-                  ['Mensalidade',infoBase?.mensalidade||'N\u00e3o cadastrado',null],
-                  ['Status',infoBase?.status||'N\u00e3o cadastrado',null],
-                  ['\u00c1rea',infoBase?.area||'N\u00e3o cadastrado',null],
-                  ['Cidade',infoBase?.cidade||'N\u00e3o cadastrado',null],
-                  ['Bairro',infoBase?.bairro||'N\u00e3o cadastrado',null],
+                  ['Classificação',clsLabel(clsF(cliente.eventos)),null],
+                  ['Mensalidade',infoBase?.mensalidade||'Não cadastrado',null],
+                  ['Status',infoBase?.status||'Não cadastrado',null],
+                  ['Área',infoBase?.area||'Não cadastrado',null],
+                  ['Cidade',infoBase?.cidade||'Não cadastrado',null],
+                  ['Bairro',infoBase?.bairro||'Não cadastrado',null],
                 ].map(([l,v,ff])=>(
                   <div key={l} style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 14px',border:'1px solid rgba(255,255,255,0.06)'}}>
                     <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:5}}>{l}</div>
@@ -4741,7 +4741,7 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
               </div>
               {!infoBase&&(
                 <div style={{marginTop:14,padding:'10px 14px',borderRadius:10,background:'rgba(251,191,36,0.07)',border:'1px solid rgba(251,191,36,0.2)',fontSize:12,color:'#fbbf24'}}>
-                  &#9888; Este cliente n\u00e3o foi encontrado na Base Ativa. Importe a base para vincular mensalidade, status e \u00e1rea.
+                  &#9888; Este cliente não foi encontrado na Base Ativa. Importe a base para vincular mensalidade, status e área.
                 </div>
               )}
             </div>
@@ -4961,12 +4961,12 @@ END $$;`;
     const ps=clsF(p.eventos), cs=clsF(c?c.eventos:0);
     const o={c:3,a:2,s:1};
     if(ps===cs){
-      if(cs==='c') return {label:'manteve cr\u00edtico',cls:'red',k:'mc'};
-      if(cs==='a') return {label:'manteve aten\u00e7\u00e3o',cls:'amber',k:'ma'};
-      return {label:'manteve saud\u00e1vel',cls:'green',k:'ms'};
+      if(cs==='c') return {label:'manteve crítico',cls:'red',k:'mc'};
+      if(cs==='a') return {label:'manteve atenção',cls:'amber',k:'ma'};
+      return {label:'manteve saudável',cls:'green',k:'ms'};
     }
-    if(o[cs]>o[ps]) return cs==='c'?{label:'piorou \u2192 cr\u00edtico',cls:'red',k:'pc'}:{label:'piorou \u2192 aten\u00e7\u00e3o',cls:'amber',k:'pa'};
-    return cs==='s'?{label:'melhorou \u2192 saud\u00e1vel',cls:'green',k:'mels'}:{label:'melhorou \u2192 aten\u00e7\u00e3o',cls:'amber',k:'mela'};
+    if(o[cs]>o[ps]) return cs==='c'?{label:'piorou → crítico',cls:'red',k:'pc'}:{label:'piorou → atenção',cls:'amber',k:'pa'};
+    return cs==='s'?{label:'melhorou → saudável',cls:'green',k:'mels'}:{label:'melhorou → atenção',cls:'amber',k:'mela'};
   };
 
   const evBadge = (cls) => {
@@ -5035,7 +5035,7 @@ END $$;`;
         const mon=new Date(today);mon.setDate(today.getDate()-((today.getDay()+6)%7));
         const sun=new Date(mon);sun.setDate(mon.getDate()+6);
         const fmt=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0');
-        const label=fmt(mon)+' \u2013 '+fmt(sun);
+        const label=fmt(mon)+' – '+fmt(sun);
         // Sugerir label a partir do nome do arquivo
         const fname = (file.name||'').replace(/\.xlsx?$/i,'').replace(/_/g,'/').replace(/\s+/g,' ').trim();
         // Tenta extrair datas do nome: 04_05_2026_10_05_2026 → 04/05 – 10/05
@@ -5101,7 +5101,7 @@ END $$;`;
       chartInst.current=new Chart(chartRef.current,{
         type:'bar',
         data:{
-          labels:['Cr\u00edticos','Aten\u00e7\u00e3o','Saud\u00e1veis'],
+          labels:['Críticos','Atenção','Saudáveis'],
           datasets:[
             {label:weeks[cw-1].label,data:[tp.c,tp.a,tp.s],backgroundColor:'rgba(255,255,255,0.07)',borderColor:'rgba(255,255,255,0.2)',borderWidth:1,borderRadius:4},
             {label:w.label,data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.7)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:1,borderRadius:4}
@@ -5115,7 +5115,7 @@ END $$;`;
       chartInst.current=new Chart(chartRef.current,{
         type:'doughnut',
         data:{
-          labels:['Cr\u00edticos','Aten\u00e7\u00e3o','Saud\u00e1veis'],
+          labels:['Críticos','Atenção','Saudáveis'],
           datasets:[{data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.8)','rgba(251,191,36,0.8)','rgba(52,211,153,0.8)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:2,hoverOffset:6}]
         },
         options:{responsive:true,maintainAspectRatio:false,cutout:'65%',
@@ -5128,16 +5128,46 @@ END $$;`;
   if(!weeks.length){
     return (
       <div style={{animation:'fadeUp 0.3s ease'}}>
+
+        {/* Modal de confirmação do label mesmo na tela vazia */}
+        {importPending && (
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}>
+            <div style={{background:'#0d1424',border:'1px solid rgba(167,139,250,0.3)',borderRadius:20,width:'100%',maxWidth:480,padding:28}}>
+              <div style={{fontSize:16,fontWeight:700,color:'#fff',marginBottom:6}}>Confirmar importação</div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:20}}>{importPending.rows.length} clientes carregados. Defina o nome desta semana:</div>
+              <input
+                value={importLabel}
+                onChange={e=>setImportLabel(e.target.value)}
+                placeholder="Ex: 04/05 – 10/05"
+                style={{width:'100%',padding:'10px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:14,outline:'none',marginBottom:16,boxSizing:'border-box'}}
+                autoFocus
+                onKeyDown={e=>{ if(e.key==='Enter'&&importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
+              />
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{ if(importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
+                  disabled={!importLabel.trim()}
+                  style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.15)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                  Importar como "{importLabel||'...'}"
+                </button>
+                <button onClick={()=>setImportPending(null)}
+                  style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:32,flexWrap:'wrap',gap:12}}>
           <div>
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
               <div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/>
-              <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>An\u00e1lise de Bases</span>
+              <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>Análise de Bases</span>
             </div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Importe a 1\u00aa semana para come\u00e7ar a an\u00e1lise</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Importe a 1ª semana para começar a análise</div>
           </div>
           <label style={{padding:'9px 20px',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.12)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:8}}>
-            &#128229; Importar 1\u00aa semana
+            Importar 1ª semana
             <input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/>
           </label>
         </div>
@@ -5147,7 +5177,7 @@ END $$;`;
           <div style={{fontSize:12,color:'rgba(255,255,255,0.15)',lineHeight:1.8,maxWidth:420,margin:'0 auto'}}>
             Exporte a planilha do seu sistema e importe aqui.<br/>
             <code style={{color:'rgba(167,139,250,0.5)',fontSize:11}}>Empresa &middot; Conta &middot; Fantasia &middot; Quantidade de eventos</code><br/>
-            <span style={{fontSize:11}}>Importe a 1\u00aa semana como base &rarr; depois a 2\u00aa para ver o comparativo</span>
+            <span style={{fontSize:11}}>Importe a 1ª semana como base &rarr; depois a 2ª para ver o comparativo</span>
           </div>
         </div>
       </div>
@@ -5490,13 +5520,13 @@ END $$;`;
       {/* Gráfico + Comparativo */}
       <div style={{display:'grid',gridTemplateColumns:'300px 1fr',gap:16,marginBottom:20}}>
         <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:16,padding:'16px 20px'}}>
-          <div style={{fontSize:13,fontWeight:600,color:'#fff',marginBottom:14}}>{hp?'Comparativo de semanas':'Distribui\u00e7\u00e3o atual'}</div>
+          <div style={{fontSize:13,fontWeight:600,color:'#fff',marginBottom:14}}>{hp?'Comparativo de semanas':'Distribuição atual'}</div>
           <div style={{position:'relative',height:200}}>
-            <canvas ref={chartRef} role="img" aria-label="Gr\u00e1fico de distribui\u00e7\u00e3o de clientes"/>
+            <canvas ref={chartRef} role="img" aria-label="Gráfico de distribuição de clientes"/>
           </div>
           {!hp&&(
             <div style={{display:'flex',justifyContent:'center',gap:12,marginTop:12}}>
-              {[['Cr\u00edticos','#f87171',t.c],['Aten\u00e7\u00e3o','#fbbf24',t.a],['Saud\u00e1veis','#34d399',t.s]].map(([l,c,v])=>(
+              {[['Críticos','#f87171',t.c],['Atenção','#fbbf24',t.a],['Saudáveis','#34d399',t.s]].map(([l,c,v])=>(
                 <div key={l} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,0.45)'}}>
                   <span style={{width:8,height:8,borderRadius:2,background:c,display:'block'}}/>{l} <strong style={{color:'#fff'}}>{v}</strong>
                 </div>
@@ -5513,13 +5543,13 @@ END $$;`;
           {!cmp?(
             <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:160,gap:8}}>
               <div style={{fontSize:36,opacity:.12}}>&#128202;</div>
-              <div style={{fontSize:12,color:'rgba(255,255,255,0.2)',textAlign:'center',lineHeight:1.7}}>Importe a 2\u00aa semana para<br/>ativar o comparativo autom\u00e1tico</div>
+              <div style={{fontSize:12,color:'rgba(255,255,255,0.2)',textAlign:'center',lineHeight:1.7}}>Importe a 2ª semana para<br/>ativar o comparativo automático</div>
             </div>
           ):(
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
               <div style={{background:'rgba(255,255,255,0.03)',borderRadius:12,padding:'12px 14px'}}>
                 <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Varia&#231;&#227;o</div>
-                {[['Cr\u00edticos',cmp.pp.c,cmp.cp.c,'#f87171'],['Aten\u00e7\u00e3o',cmp.pp.a,cmp.cp.a,'#fbbf24'],['Saud\u00e1veis',cmp.pp.s,cmp.cp.s,'#34d399'],['Total',cmp.pp.t,cmp.cp.t,'#a78bfa']].map(([l,p,c,cor])=>(
+                {[['Críticos',cmp.pp.c,cmp.cp.c,'#f87171'],['Atenção',cmp.pp.a,cmp.cp.a,'#fbbf24'],['Saudáveis',cmp.pp.s,cmp.cp.s,'#34d399'],['Total',cmp.pp.t,cmp.cp.t,'#a78bfa']].map(([l,p,c,cor])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
                     <span style={{fontSize:11,color:'rgba(255,255,255,0.4)',display:'flex',alignItems:'center',gap:4}}><span style={{width:5,height:5,borderRadius:'50%',background:cor,display:'block'}}/>{l}</span>
                     <span style={{fontSize:11,fontWeight:600,color:'#fff'}}>{p} &#8594; {c} {dlt(c,p)}</span>
@@ -5528,7 +5558,7 @@ END $$;`;
               </div>
               <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.1)',borderRadius:12,padding:'12px 14px'}}>
                 <div style={{fontSize:10,color:'#f87171',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Negativos</div>
-                {[['Pioraram \u2192 cr\u00edtico',cmp.mv.pc],['Pioraram \u2192 aten\u00e7\u00e3o',cmp.mv.pa],['Mantiveram cr\u00edtico',cmp.mv.mc],['Mantiveram aten\u00e7\u00e3o',cmp.mv.ma]].map(([l,v])=>(
+                {[['Pioraram → crítico',cmp.mv.pc],['Pioraram → atenção',cmp.mv.pa],['Mantiveram crítico',cmp.mv.mc],['Mantiveram atenção',cmp.mv.ma]].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
                     <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span>
                     <span style={{fontSize:13,fontWeight:700,color:v>0?'#f87171':'rgba(255,255,255,0.2)'}}>{v}</span>
@@ -5537,7 +5567,7 @@ END $$;`;
               </div>
               <div style={{background:'rgba(52,211,153,0.05)',border:'1px solid rgba(52,211,153,0.1)',borderRadius:12,padding:'12px 14px'}}>
                 <div style={{fontSize:10,color:'#34d399',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Positivos</div>
-                {[['Melhoraram \u2192 saud\u00e1vel',cmp.mv.mels],['Melhoraram \u2192 aten\u00e7\u00e3o',cmp.mv.mela],['Mantiveram saud\u00e1vel',cmp.mv.ms],['Novos clientes',cmp.mv.novo]].map(([l,v])=>(
+                {[['Melhoraram → saudável',cmp.mv.mels],['Melhoraram → atenção',cmp.mv.mela],['Mantiveram saudável',cmp.mv.ms],['Novos clientes',cmp.mv.novo]].map(([l,v])=>(
                   <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
                     <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span>
                     <span style={{fontSize:13,fontWeight:700,color:v>0?'#34d399':'rgba(255,255,255,0.2)'}}>{v}</span>
@@ -5552,7 +5582,7 @@ END $$;`;
       {/* Tabs + portaria */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
         <div style={{display:'flex',gap:4}}>
-          {[['c','Cr\u00edticos',t.c,'#f87171'],['a','Aten\u00e7\u00e3o',t.a,'#fbbf24'],['s','Saud\u00e1veis',t.s,'#34d399']].map(([k,l,n,c])=>(
+          {[['c','Críticos',t.c,'#f87171'],['a','Atenção',t.a,'#fbbf24'],['s','Saudáveis',t.s,'#34d399']].map(([k,l,n,c])=>(
             <button key={k} onClick={()=>{setTab(k);setPage(0);}}
               style={{background:'transparent',border:'none',padding:'8px 18px',fontSize:13,cursor:'pointer',
                 color:tab===k?c:'rgba(255,255,255,0.35)',fontWeight:tab===k?700:400,
@@ -5603,7 +5633,7 @@ END $$;`;
             </colgroup>
             <thead>
               <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                {['Conta','Cliente','Empresa','Eventos',...(hp?['Ant.','Evolu\u00e7\u00e3o']:[])].map(h=>(
+                {['Conta','Cliente','Empresa','Eventos',...(hp?['Ant.','Evolução']:[])].map(h=>(
                   <th key={h} style={{padding:'10px 14px',textAlign:h==='Eventos'||h==='Ant.'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
                 ))}
               </tr>
