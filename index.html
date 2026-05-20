@@ -4050,36 +4050,41 @@ async function sbSalvarBaseAtiva(sb, rows) {
 async function sbCarregarBaseAtiva(sb) {
   if(!sbReady() || !sb) return null;
   try {
-    // Passo 1: descobrir o total exato
-    const {count, error: cErr} = await sb.from('analise_base_ativa')
+    // 1. Contar total real
+    const {count, error: cErr} = await sb
+      .from('analise_base_ativa')
       .select('*', {count:'exact', head:true});
     if(cErr) throw cErr;
     const total = count || 0;
     console.log('[BaseAtiva] Total no Supabase:', total);
     if(total === 0) return [];
 
-    // Passo 2: buscar em páginas de 1000 até ter tudo
+    // 2. Busca sequencial em páginas de 1000 — evita rate limit
     const PAGE = 1000;
-    const promises = [];
-    for(let from = 0; from < total; from += PAGE) {
-      promises.push(
-        sb.from('analise_base_ativa')
-          .select('id,empresa,conta,cliente,mensalidade,status,area,cidade,bairro')
-          .order('id', {ascending:true})
-          .range(from, Math.min(from + PAGE - 1, total - 1))
-      );
-    }
-
-    // Executa todas as buscas em paralelo
-    const results = await Promise.all(promises);
     let all = [];
-    for(const {data, error} of results) {
+    for(let from = 0; from < total; from += PAGE) {
+      const to = Math.min(from + PAGE - 1, total - 1);
+      const {data, error} = await sb
+        .from('analise_base_ativa')
+        .select('id,empresa,conta,cliente,mensalidade,status,area,cidade,bairro')
+        .order('id', {ascending: true})
+        .range(from, to);
       if(error) throw error;
-      if(data) all = all.concat(data);
+      if(data && data.length > 0) {
+        all = all.concat(data);
+        console.log('[BaseAtiva] Progresso:', all.length, '/', total);
+      }
+      // Pequena pausa para não sobrecarregar
+      if(from + PAGE < total) {
+        await new Promise(r => setTimeout(r, 80));
+      }
     }
-    console.log('[BaseAtiva] Carregados:', all.length, '/', total);
+    console.log('[BaseAtiva] Carregamento concluído:', all.length);
     return all;
-  } catch(e) { console.warn('sbCarregarBaseAtiva:', e.message); return null; }
+  } catch(e) {
+    console.warn('sbCarregarBaseAtiva:', e.message);
+    return null;
+  }
 }
 
 async function sbLimparBaseAtiva(sb) {
