@@ -4133,6 +4133,15 @@ async function sbLimparBaseAtiva(sb) {
 async function sbSalvarSemana(sb, label, rows) {
   if(!sbReady() || !sb) return false;
   try {
+    // Deduplicar por conta+empresa
+    const seen = new Map();
+    for(const r of rows) {
+      const key = (r.conta||'').trim().toLowerCase()+'||'+(r.empresa||'').trim().toLowerCase();
+      seen.set(key, r);
+    }
+    const unique = Array.from(seen.values());
+    console.log('[sbSemana] Salvando', label, '— únicos:', unique.length);
+
     // 1. Garante registro da semana
     await sb.from('analise_semanas')
       .upsert({label}, {onConflict:'label', ignoreDuplicates:true});
@@ -4140,17 +4149,23 @@ async function sbSalvarSemana(sb, label, rows) {
     // 2. Remove clientes antigos desta semana
     await sb.from('analise_semana_clientes').delete().eq('semana_label', label);
 
-    // 3. Insere novos em lotes de 200
-    const BATCH = 200;
-    for(let i=0; i<rows.length; i+=BATCH) {
-      const lote = rows.slice(i,i+BATCH).map(r=>({
+    // 3. Insere em lotes de 100 com pausa
+    const BATCH = 100;
+    let salvos = 0;
+    for(let i=0; i<unique.length; i+=BATCH) {
+      const lote = unique.slice(i, i+BATCH).map(r=>({
         semana_label: label,
-        empresa: r.empresa, conta: r.conta,
-        cliente: r.cliente, eventos: r.eventos
+        empresa: (r.empresa||'').trim(),
+        conta:   (r.conta  ||'').trim(),
+        cliente: (r.cliente||'').trim(),
+        eventos: parseInt(r.eventos) || 0
       }));
       const {error} = await sb.from('analise_semana_clientes').insert(lote);
-      if(error) throw error;
+      if(error) { console.warn('[sbSemana] Erro lote', i, error.message); }
+      else salvos += lote.length;
+      if(i + BATCH < unique.length) await new Promise(r=>setTimeout(r,80));
     }
+    console.log('[sbSemana] Salvos:', salvos, '/', unique.length);
     return true;
   } catch(e) { console.warn('sbSalvarSemana:', e.message); return false; }
 }
@@ -4158,31 +4173,42 @@ async function sbSalvarSemana(sb, label, rows) {
 async function sbCarregarSemanas(sb) {
   if(!sbReady() || !sb) return null;
   try {
-    // Carrega lista de semanas
+    // Busca semanas
     const {data: semanas, error: e1} = await sb.from('analise_semanas')
       .select('label').order('importado_em', {ascending:true});
     if(e1) throw e1;
     if(!semanas || !semanas.length) return [];
+    console.log('[sbSemanas] Semanas encontradas:', semanas.map(s=>s.label));
 
-    // Carrega todos os clientes de uma vez
-    // Paginação — suporta bases grandes sem limite
-    let clientes = [], _from = 0, _done = false;
-    while(!_done) {
-      const {data: _lote, error: _err} = await sb.from('analise_semana_clientes')
+    // Contar total de clientes
+    const {count, error: cErr} = await sb.from('analise_semana_clientes')
+      .select('*', {count:'exact', head:true});
+    if(cErr) throw cErr;
+    const total = count || 0;
+    console.log('[sbSemanas] Total clientes:', total);
+
+    // Buscar todos em páginas
+    const PAGE = 1000;
+    let clientes = [];
+    for(let from=0; from<total; from+=PAGE) {
+      const {data: lote, error: e2} = await sb.from('analise_semana_clientes')
         .select('semana_label,empresa,conta,cliente,eventos')
-        .range(_from, _from + 999);
-      if(_err) throw _err;
-      if(!_lote || _lote.length === 0) break;
-      clientes = clientes.concat(_lote);
-      if(_lote.length < 1000) _done = true;
-      else _from += 1000;
+        .range(from, Math.min(from+PAGE-1, total-1));
+      if(e2) throw e2;
+      if(lote) clientes = clientes.concat(lote);
+      if(from+PAGE < total) await new Promise(r=>setTimeout(r,80));
     }
+    console.log('[sbSemanas] Clientes carregados:', clientes.length);
 
-    // Agrupa por semana
+    // Agrupar por semana
     return semanas.map(s => ({
       label: s.label,
-      rows: (clientes||[]).filter(c => c.semana_label === s.label)
-        .map(c => ({empresa:c.empresa, conta:c.conta, cliente:c.cliente, eventos:c.eventos}))
+      rows: clientes
+        .filter(c => c.semana_label === s.label)
+        .map(c => ({
+          empresa: c.empresa, conta: c.conta,
+          cliente: c.cliente, eventos: parseInt(c.eventos)||0
+        }))
     }));
   } catch(e) { console.warn('sbCarregarSemanas:', e.message); return null; }
 }
@@ -4743,6 +4769,8 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const [soloPI, setSoloPI] = React.useState(false);
   const [page,   setPage]   = React.useState(0);
   const [modal,       setModal]       = React.useState(null);
+  const [novosClientes, setNovosClientes] = React.useState([]);
+  const [showNovos,     setShowNovos]     = React.useState(false);
   const [dbStatus,    setDbStatus]    = React.useState(null);
   const [dbMsg,       setDbMsg]       = React.useState('');
   const [showSql,     setShowSql]     = React.useState(false);
@@ -4760,6 +4788,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
     (async()=>{
       const dados = await sbCarregarSemanas(supabaseClient);
       if(dados && dados.length > 0) {
+        console.log('[Semanas] Carregadas do Supabase:', dados.map(w=>w.label+':'+w.rows.length));
         setWeeks(dados);
         setCw(dados.length - 1);
       }
@@ -4979,7 +5008,7 @@ END $$;`;
                 if(val.includes('empresa')) colEmp=idx;
                 else if(val.includes('conta')) colCont=idx;
                 else if(val.includes('fantasia')||val.includes('cliente')) colCli=idx;
-                else if(val.includes('quantidade')||val.includes('eventos')) colEvt=idx;
+                else if(val.includes('quantidade')||val.includes('eventos')||val.includes('event')) colEvt=idx;
               });
               break;
             }
@@ -4991,16 +5020,40 @@ END $$;`;
             if(emp&&cont&&cli) rows.push({conta:cont,cliente:cli,empresa:emp,eventos:evs});
           }
         });
-        if(!rows.length){alert('Nenhum dado encontrado. Verifique as colunas do arquivo.');return;}
+        if(!rows.length){alert('Nenhum dado encontrado. Verifique as colunas do arquivo (Empresa, Conta, Fantasia, Quantidade de eventos).');return;}
+        // Garantir que eventos é sempre número
+        rows.forEach(r=>{ r.eventos = parseInt(r.eventos)||0; });
+        console.log('[Import] Importados:', rows.length, '| Exemplo:', rows[0]);
         const today=new Date();
         const mon=new Date(today);mon.setDate(today.getDate()-((today.getDay()+6)%7));
         const sun=new Date(mon);sun.setDate(mon.getDate()+6);
         const fmt=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0');
         const label=fmt(mon)+' \u2013 '+fmt(sun);
+        // Cruzar com Base Ativa — encontrar clientes novos
+        let baseAtiva = [];
+        try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
+        const normStr = s => (s||'').toLowerCase().trim();
+        const novos = rows.filter(r => {
+          return !baseAtiva.some(b =>
+            normStr(b.conta) === normStr(r.conta) &&
+            (normStr(b.empresa) === normStr(r.empresa) ||
+             normStr(b.empresa).includes(normStr(r.empresa)) ||
+             normStr(r.empresa).includes(normStr(b.empresa)))
+          );
+        });
+        if(novos.length > 0) {
+          setNovosClientes(novos);
+          setShowNovos(true);
+        } else {
+          setNovosClientes([]);
+          setShowNovos(false);
+        }
+
         // Salva no Supabase
         sbSalvarSemana(supabaseClient, label, rows).then(ok=>{
-          if(!ok) console.warn('Semana salva só localmente');
+          console.log('[Semana] Supabase:', ok ? 'ok' : 'falhou');
         });
+
         setWeeks(prev=>{
           const ei=prev.findIndex(w=>w.label===label);
           let nw;
@@ -5093,6 +5146,76 @@ END $$;`;
 
   return (
     <div style={{animation:'fadeUp 0.3s ease'}}>
+
+      {/* Modal de novos clientes não encontrados na Base Ativa */}
+      {showNovos && novosClientes.length > 0 && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9998,padding:20}}
+          onClick={e=>e.target===e.currentTarget&&setShowNovos(false)}>
+          <div style={{background:'#0d1424',border:'1px solid rgba(251,191,36,0.3)',borderRadius:20,width:'100%',maxWidth:680,maxHeight:'85vh',overflow:'auto',padding:28}}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
+              <div>
+                <div style={{fontSize:16,fontWeight:700,color:'#fbbf24',marginBottom:4}}>
+                  ⚠️ {novosClientes.length} cliente{novosClientes.length>1?'s':''} não encontrado{novosClientes.length>1?'s':''} na Base Ativa
+                </div>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>
+                  Esses clientes estão no relatório importado mas não constam na Base Ativa. Deseja adicioná-los?
+                </div>
+              </div>
+              <button onClick={()=>setShowNovos(false)}
+                style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>×</button>
+            </div>
+
+            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,overflow:'hidden',marginBottom:16,maxHeight:340,overflowY:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead>
+                  <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+                    {['Conta','Cliente','Empresa','Eventos'].map(h=>(
+                      <th key={h} style={{padding:'8px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.06em'}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {novosClientes.slice(0,100).map((r,i)=>(
+                    <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)'}}>
+                      <td style={{padding:'7px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.conta}</td>
+                      <td style={{padding:'7px 14px',color:'rgba(255,255,255,0.8)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>{r.cliente}</td>
+                      <td style={{padding:'7px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
+                      <td style={{padding:'7px 14px',fontWeight:600,color:'#fff'}}>{(r.eventos||0).toLocaleString('pt-BR')}</td>
+                    </tr>
+                  ))}
+                  {novosClientes.length > 100 && (
+                    <tr><td colSpan={4} style={{padding:'8px 14px',textAlign:'center',color:'rgba(255,255,255,0.25)',fontSize:11}}>... e mais {novosClientes.length-100} clientes</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={async()=>{
+                const novosParaBase = novosClientes.map(r=>({
+                  empresa: r.empresa, conta: r.conta, cliente: r.cliente,
+                  mensalidade:'', status:'Ativo', area:'', cidade:'', bairro:''
+                }));
+                let baseAtiva = [];
+                try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
+                const atualizada = [...baseAtiva, ...novosParaBase];
+                try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(atualizada)); }catch{}
+                await sbSalvarBaseAtiva(supabaseClient, atualizada);
+                setShowNovos(false);
+                setNovosClientes([]);
+                alert(novosClientes.length+' cliente(s) adicionados à Base Ativa!');
+              }}
+                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                ✅ Sim, adicionar à Base Ativa
+              </button>
+              <button onClick={()=>setShowNovos(false)}
+                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.5)',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                Ignorar por agora
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modal&&<ClienteAnaliseModal
         cliente={modal}
