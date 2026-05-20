@@ -4021,6 +4021,132 @@ class ErrorBoundary extends React.Component {
 
 
 // ════════════════════════════════════════════════════
+//  CAMADA SUPABASE — salva/carrega tudo em nuvem
+//  com fallback automático para localStorage
+// ════════════════════════════════════════════════════
+
+// Helpers de normalização
+const sbReady = () => window._supabaseReady === true;
+
+// ── BASE ATIVA ──────────────────────────────────────
+async function sbSalvarBaseAtiva(sb, rows) {
+  if(!sbReady() || !sb) return false;
+  try {
+    // Upsert em lotes de 200
+    const BATCH = 200;
+    for(let i=0; i<rows.length; i+=BATCH) {
+      const lote = rows.slice(i,i+BATCH).map(r=>({
+        empresa: r.empresa, conta: r.conta, cliente: r.cliente,
+        mensalidade: r.mensalidade||'', status: r.status||'Ativo', area: r.area||''
+      }));
+      const {error} = await sb.from('analise_base_ativa')
+        .upsert(lote, {onConflict:'conta,empresa', ignoreDuplicates:false});
+      if(error) throw error;
+    }
+    return true;
+  } catch(e) { console.warn('sbSalvarBaseAtiva:', e.message); return false; }
+}
+
+async function sbCarregarBaseAtiva(sb) {
+  if(!sbReady() || !sb) return null;
+  try {
+    const {data, error} = await sb.from('analise_base_ativa')
+      .select('*').order('cliente', {ascending:true}).limit(10000);
+    if(error) throw error;
+    return data || [];
+  } catch(e) { console.warn('sbCarregarBaseAtiva:', e.message); return null; }
+}
+
+async function sbLimparBaseAtiva(sb) {
+  if(!sbReady() || !sb) return false;
+  try {
+    const {error} = await sb.from('analise_base_ativa').delete().neq('id','00000000-0000-0000-0000-000000000000');
+    if(error) throw error;
+    return true;
+  } catch(e) { console.warn('sbLimparBaseAtiva:', e.message); return false; }
+}
+
+// ── SEMANAS ─────────────────────────────────────────
+async function sbSalvarSemana(sb, label, rows) {
+  if(!sbReady() || !sb) return false;
+  try {
+    // 1. Garante registro da semana
+    await sb.from('analise_semanas')
+      .upsert({label}, {onConflict:'label', ignoreDuplicates:true});
+
+    // 2. Remove clientes antigos desta semana
+    await sb.from('analise_semana_clientes').delete().eq('semana_label', label);
+
+    // 3. Insere novos em lotes de 200
+    const BATCH = 200;
+    for(let i=0; i<rows.length; i+=BATCH) {
+      const lote = rows.slice(i,i+BATCH).map(r=>({
+        semana_label: label,
+        empresa: r.empresa, conta: r.conta,
+        cliente: r.cliente, eventos: r.eventos
+      }));
+      const {error} = await sb.from('analise_semana_clientes').insert(lote);
+      if(error) throw error;
+    }
+    return true;
+  } catch(e) { console.warn('sbSalvarSemana:', e.message); return false; }
+}
+
+async function sbCarregarSemanas(sb) {
+  if(!sbReady() || !sb) return null;
+  try {
+    // Carrega lista de semanas
+    const {data: semanas, error: e1} = await sb.from('analise_semanas')
+      .select('label').order('importado_em', {ascending:true});
+    if(e1) throw e1;
+    if(!semanas || !semanas.length) return [];
+
+    // Carrega todos os clientes de uma vez
+    const {data: clientes, error: e2} = await sb.from('analise_semana_clientes')
+      .select('semana_label,empresa,conta,cliente,eventos').limit(50000);
+    if(e2) throw e2;
+
+    // Agrupa por semana
+    return semanas.map(s => ({
+      label: s.label,
+      rows: (clientes||[]).filter(c => c.semana_label === s.label)
+        .map(c => ({empresa:c.empresa, conta:c.conta, cliente:c.cliente, eventos:c.eventos}))
+    }));
+  } catch(e) { console.warn('sbCarregarSemanas:', e.message); return null; }
+}
+
+async function sbLimparSemanas(sb) {
+  if(!sbReady() || !sb) return false;
+  try {
+    await sb.from('analise_semana_clientes').delete().neq('id','00000000-0000-0000-0000-000000000000');
+    await sb.from('analise_semanas').delete().neq('id','00000000-0000-0000-0000-000000000000');
+    return true;
+  } catch(e) { console.warn('sbLimparSemanas:', e.message); return false; }
+}
+
+// ── TRATATIVAS ──────────────────────────────────────
+async function sbSalvarTratativa(sb, nota) {
+  if(!sbReady() || !sb) return false;
+  try {
+    const {error} = await sb.from('analise_tratativas').insert([nota]);
+    if(error) throw error;
+    return true;
+  } catch(e) { console.warn('sbSalvarTratativa:', e.message); return false; }
+}
+
+async function sbCarregarTratativas(sb, conta, empresa) {
+  if(!sbReady() || !sb) return null;
+  try {
+    const {data, error} = await sb.from('analise_tratativas')
+      .select('*').eq('conta', conta).eq('empresa', empresa)
+      .order('criado_em', {ascending:false});
+    if(error) throw error;
+    return data || [];
+  } catch(e) { console.warn('sbCarregarTratativas:', e.message); return null; }
+}
+
+
+// ════════════════════════════════════════════════════
 //  BASE ATIVA
 // ════════════════════════════════════════════════════
 function BaseAtivaTab({supabaseClient}) {
@@ -4032,10 +4158,35 @@ function BaseAtivaTab({supabaseClient}) {
   const [msg, setMsg] = React.useState('');
   const PS = 20;
 
-  const saveBase = (rows) => {
+  const [sbStatus, setSbStatus] = React.useState('');
+
+  const saveBase = async (rows) => {
     setBaseRows(rows);
     try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(rows)); }catch{}
+    if(rows.length > 0) {
+      setSbStatus('saving');
+      const ok = await sbSalvarBaseAtiva(supabaseClient, rows);
+      setSbStatus(ok ? 'ok' : 'local');
+      setTimeout(()=>setSbStatus(''), 3000);
+    } else {
+      setSbStatus('clearing');
+      await sbLimparBaseAtiva(supabaseClient);
+      setSbStatus('');
+    }
   };
+
+  // Carrega do Supabase ao montar
+  React.useEffect(()=>{
+    (async()=>{
+      const dados = await sbCarregarBaseAtiva(supabaseClient);
+      if(dados && dados.length > 0) {
+        setBaseRows(dados);
+        try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(dados)); }catch{}
+        setSbStatus('loaded');
+        setTimeout(()=>setSbStatus(''), 2000);
+      }
+    })();
+  }, [supabaseClient]);
 
   const handleImport = (e) => {
     const file = e.target.files[0]; if(!file) return;
@@ -4127,6 +4278,13 @@ function BaseAtivaTab({supabaseClient}) {
         border:'1px solid '+(isOk?'rgba(52,211,153,0.2)':isErr?'rgba(239,68,68,0.2)':'rgba(56,189,248,0.2)'),
         fontSize:13,color:isOk?'#34d399':isErr?'#f87171':'#38bdf8'}}>
         {isOk?'✅ ':isErr?'❌ ':''}{msgText}
+      </div>}
+      {sbStatus&&<div style={{marginBottom:12,padding:'8px 14px',borderRadius:10,fontSize:12,display:'flex',alignItems:'center',gap:8,
+        background:sbStatus==='ok'||sbStatus==='loaded'?'rgba(52,211,153,0.06)':'rgba(56,189,248,0.06)',
+        border:'1px solid '+(sbStatus==='ok'||sbStatus==='loaded'?'rgba(52,211,153,0.2)':'rgba(56,189,248,0.2)'),
+        color:sbStatus==='ok'||sbStatus==='loaded'?'#34d399':'#38bdf8'}}>
+        <div style={{width:7,height:7,borderRadius:'50%',background:'currentColor',flexShrink:0}}/>
+        {sbStatus==='saving'?'Salvando no Supabase...':sbStatus==='ok'?'Salvo no Supabase ✓':sbStatus==='loaded'?'Carregado do Supabase ✓':sbStatus==='local'?'Salvo localmente (Supabase indisponível)':'Limpando...'}
       </div>}
 
       {baseRows.length===0?(
@@ -4233,14 +4391,18 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
   },[cliente,baseAtiva]);
 
   React.useEffect(()=>{
-    const key='analise_trat_'+cliente.conta+'_'+cliente.empresa;
-    try{ setNotas(JSON.parse(localStorage.getItem(key)||'[]')); }catch{}
-    if(sbReady){
-      supabaseClient.from('analise_tratativas').select('*')
-        .eq('conta',cliente.conta).eq('empresa',cliente.empresa)
-        .order('criado_em',{ascending:false})
-        .then(({data})=>{ if(data&&data.length) setNotas(data); });
-    }
+    (async()=>{
+      // Tenta carregar do Supabase primeiro
+      const dados = await sbCarregarTratativas(supabaseClient, cliente.conta, cliente.empresa);
+      if(dados && dados.length > 0) {
+        setNotas(dados);
+        // Sincroniza localStorage
+        try{ localStorage.setItem('analise_trat_'+cliente.conta+'_'+cliente.empresa, JSON.stringify(dados.slice(0,50))); }catch{}
+      } else {
+        // Fallback: localStorage
+        try{ setNotas(JSON.parse(localStorage.getItem('analise_trat_'+cliente.conta+'_'+cliente.empresa)||'[]')); }catch{}
+      }
+    })();
   },[cliente.conta, cliente.empresa]);
 
   const salvar = async () => {
@@ -4254,14 +4416,17 @@ function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, 
       criado_em: new Date().toISOString(),
       semana: semanaLabel||''
     };
-    if(sbReady){
-      const {error}=await supabaseClient.from('analise_tratativas').insert([nota]);
-      if(error){setMsg('err:'+error.message);setSaving(false);return;}
+    // Tenta salvar no Supabase
+    const sbOk = await sbSalvarTratativa(supabaseClient, nota);
+    if(!sbOk) {
+      // Fallback: localStorage
+      const key='analise_trat_'+cliente.conta+'_'+cliente.empresa;
+      const updated=[nota,...notas];
+      try{localStorage.setItem(key,JSON.stringify(updated.slice(0,50)));}catch{}
     }
-    const key='analise_trat_'+cliente.conta+'_'+cliente.empresa;
     const updated=[nota,...notas];
-    try{localStorage.setItem(key,JSON.stringify(updated.slice(0,50)));}catch{}
-    setNotas(updated); setObs(''); setMsg('ok:Tratativa salva!');
+    setNotas(updated); setObs('');
+    setMsg(sbOk?'ok:Tratativa salva no Supabase!':'ok:Tratativa salva localmente');
     setTimeout(()=>setMsg(''),3000); setSaving(false);
   };
 
@@ -4490,6 +4655,17 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const chartRef  = React.useRef(null);
   const chartInst = React.useRef(null);
   const PS = 15;
+
+  // Carrega semanas salvas do Supabase ao montar
+  React.useEffect(()=>{
+    (async()=>{
+      const dados = await sbCarregarSemanas(supabaseClient);
+      if(dados && dados.length > 0) {
+        setWeeks(dados);
+        setCw(dados.length - 1);
+      }
+    })();
+  }, [supabaseClient]);
 
   // Criação automática da tabela Supabase
   React.useEffect(()=>{
@@ -4722,6 +4898,10 @@ END $$;`;
         const sun=new Date(mon);sun.setDate(mon.getDate()+6);
         const fmt=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0');
         const label=fmt(mon)+' \u2013 '+fmt(sun);
+        // Salva no Supabase
+        sbSalvarSemana(supabaseClient, label, rows).then(ok=>{
+          if(!ok) console.warn('Semana salva só localmente');
+        });
         setWeeks(prev=>{
           const ei=prev.findIndex(w=>w.label===label);
           let nw;
@@ -4736,9 +4916,10 @@ END $$;`;
     e.target.value='';
   };
 
-  const limpar=()=>{
+  const limpar=async()=>{
     if(!window.confirm('Limpar todas as semanas importadas?')) return;
     setWeeks([]);setCw(0);setTab('c');setPage(0);setSearch('');setEmpFil('');setEvof('');setSoloPI(false);
+    await sbLimparSemanas(supabaseClient);
   };
 
   // Gráfico
