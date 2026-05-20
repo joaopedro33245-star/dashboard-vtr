@@ -5,6 +5,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -4019,6 +4020,355 @@ class ErrorBoundary extends React.Component {
 }
 
 
+
+// ═══════════════════════════════════════════════
+//  COMPONENTE: Análise de Bases
+// ═══════════════════════════════════════════════
+function AnaliseBases() {
+  const clsF = (e) => e > 10 ? 'critico' : e >= 6 ? 'atencao' : 'saudavel';
+
+  const WEEK1_DATA = [
+    {empresa:"1. SERVIS CEARÁ",conta:"8594",cliente:"SE JABUTI",eventos:37046},
+    {empresa:"1. SERVIS CEARÁ",conta:"04E0",cliente:"CLIENTE COM CFTV - YPORA",eventos:27410},
+    {empresa:"1. SERVIS CEARÁ",conta:"05CF",cliente:"IGREJA BATISTA DUNAS",eventos:25543},
+    {empresa:"1. SERVIS CEARÁ",conta:"8611",cliente:"MTECHCE",eventos:17695},
+    {empresa:"1. SERVIS CEARÁ",conta:"7572",cliente:"CIA DO TERNO",eventos:11805},
+    {empresa:"1. SERVIS CEARÁ",conta:"05D1",cliente:"MONTAGGI MOVEIS",eventos:9369},
+    {empresa:"1. SERVIS CEARÁ",conta:"8761",cliente:"SE IBIAPINA",eventos:4711},
+    {empresa:"3. SERVIS MARANHAO",conta:"8735",cliente:"CLINICA RESET",eventos:4661},
+    {empresa:"3. SERVIS MARANHAO",conta:"9577",cliente:"COND. RESIDENCIAL JAQUEIRAS 2",eventos:3479},
+    {empresa:"1. SERVIS CEARÁ",conta:"1856",cliente:"SEW EURODRAIVE BRASIL",eventos:3465},
+    {empresa:"1. SERVIS CEARÁ",conta:"0C37",cliente:"IGREJA BATISTA MANANCIAL",eventos:3427},
+    {empresa:"3. SERVIS MARANHAO",conta:"0078",cliente:"CFTV - AGRAMOTO",eventos:3072},
+    {empresa:"1. SERVIS CEARÁ",conta:"4756",cliente:"TECNO FOODS ALIMENTOS",eventos:2287},
+    {empresa:"1. SERVIS CEARÁ",conta:"0267",cliente:"COND. MONTE PARADISE.",eventos:2211},
+    {empresa:"1. SERVIS CEARÁ",conta:"9821",cliente:"SE SAO LUIS DO CURU",eventos:2165},
+    {empresa:"VISION SEGURANCA",conta:"8166",cliente:"EDUARDO GARCIA DOS SANTOS",eventos:750},
+    {empresa:"3. SERVIS MARANHAO",conta:"9717",cliente:"COND. QUINTAS DO CALHAU",eventos:579},
+    {empresa:"2. SERVIS AMAZONAS",conta:"8123",cliente:"HAPVIDA PARQUE DEZ",eventos:279},
+    {empresa:"SIDERALTECH",conta:"3002",cliente:"PAVTELAS",eventos:120},
+    {empresa:"Maver Monitoramento",conta:"0618",cliente:"RBS IMPRESSAO",eventos:381},
+    {empresa:"1. SERVIS CEARÁ",conta:"5937",cliente:"COND. ALTANA MEIRELES",eventos:10},
+    {empresa:"1. SERVIS CEARÁ",conta:"7436",cliente:"COMPRESSIVE",eventos:10},
+    {empresa:"3. SERVIS MARANHAO",conta:"7939",cliente:"AMELIA CAROLINY OLIVEIRA",eventos:10},
+    {empresa:"2. SERVIS AMAZONAS",conta:"1197",cliente:"HAGE INDUSTRIA E COMERCIO",eventos:10},
+    {empresa:"1. SERVIS CEARÁ",conta:"9502",cliente:"GERARDO AGUIAR NETO",eventos:9},
+    {empresa:"1. SERVIS CEARÁ",conta:"5247",cliente:"JP RECICLAGEM",eventos:9},
+    {empresa:"3. SERVIS MARANHAO",conta:"8477",cliente:"CRISTINA MARTINS TAVARES",eventos:9},
+    {empresa:"1. SERVIS CEARÁ",conta:"3862",cliente:"COND. SUNVILLE RESIDENCE",eventos:8},
+    {empresa:"1. SERVIS CEARÁ",conta:"5422",cliente:"BYD",eventos:8},
+    {empresa:"2. SERVIS AMAZONAS",conta:"2764",cliente:"CFTV CASA DA CARNE LORENZO",eventos:8},
+    {empresa:"1. SERVIS CEARÁ",conta:"3247",cliente:"CLIENTE CFTV - MAYDANY",eventos:5},
+    {empresa:"1. SERVIS CEARÁ",conta:"2788",cliente:"NOSSA MOTO - SIQUEIRA",eventos:5},
+    {empresa:"1. SERVIS CEARÁ",conta:"7824",cliente:"VMZ DISTRIBUIDORA",eventos:5},
+    {empresa:"1. SERVIS CEARÁ",conta:"5811",cliente:"BL SOLUCOES",eventos:5},
+    {empresa:"3. SERVIS MARANHAO",conta:"1544",cliente:"SILVIA REGINA MENDONCA",eventos:5},
+    {empresa:"2. SERVIS AMAZONAS",conta:"2769",cliente:"KATIANE REGINA BRAGA",eventos:5},
+    {empresa:"1. SERVIS CEARÁ",conta:"6081",cliente:"JORGE LUIZ ANGELIM VIANA",eventos:2},
+    {empresa:"1. SERVIS CEARÁ",conta:"9557",cliente:"(CFTV) SERAP",eventos:2},
+    {empresa:"VISION SEGURANCA",conta:"8745",cliente:"NICCO GASTRO BAR",eventos:2},
+    {empresa:"1. SERVIS CEARÁ",conta:"5944",cliente:"POLITECNICA COMERCIO",eventos:1},
+  ];
+
+  const [weeks, setWeeks] = React.useState([{label:"11/05 \u2013 17/05", rows: WEEK1_DATA}]);
+  const [cw, setCw] = React.useState(0);
+  const [tab, setTab] = React.useState("critico");
+  const [search, setSearch] = React.useState("");
+  const [empresa, setEmpresa] = React.useState("");
+  const [evof, setEvof] = React.useState("");
+  const [page, setPage] = React.useState(0);
+  const PS = 15;
+
+  const getTotals = (rows) => ({
+    c: rows.filter(r => clsF(r.eventos) === 'critico').length,
+    a: rows.filter(r => clsF(r.eventos) === 'atencao').length,
+    s: rows.filter(r => clsF(r.eventos) === 'saudavel').length,
+    t: rows.length
+  });
+
+  const getEvo = (conta, ci) => {
+    if (ci === 0) return {label:'base', cls:'gray', k:'base'};
+    const p = weeks[ci-1].rows.find(r => r.conta.trim() === conta.trim());
+    const c = weeks[ci].rows.find(r => r.conta.trim() === conta.trim());
+    if (!p) return {label:'novo', cls:'blue', k:'novo'};
+    const ps = clsF(p.eventos), cs = clsF(c ? c.eventos : 0);
+    const o = {critico:3, atencao:2, saudavel:1};
+    if (ps === cs) {
+      if (cs === 'critico') return {label:'manteve critico', cls:'red', k:'mc'};
+      if (cs === 'atencao') return {label:'manteve atencao', cls:'amber', k:'ma'};
+      return {label:'manteve saudavel', cls:'green', k:'ms'};
+    }
+    if (o[cs] > o[ps]) {
+      if (cs === 'critico') return {label:'piorou critico', cls:'red', k:'pc'};
+      return {label:'piorou atencao', cls:'amber', k:'pa'};
+    }
+    if (cs === 'saudavel') return {label:'melhorou saudavel', cls:'green', k:'mels'};
+    return {label:'melhorou atencao', cls:'amber', k:'mela'};
+  };
+
+  const evoBadge = (cls) => {
+    const map = {
+      red:   {background:'rgba(239,68,68,0.15)',   color:'#f87171'},
+      amber: {background:'rgba(251,191,36,0.15)',  color:'#fbbf24'},
+      green: {background:'rgba(52,211,153,0.15)',  color:'#34d399'},
+      blue:  {background:'rgba(56,189,248,0.15)',  color:'#38bdf8'},
+      gray:  {background:'rgba(255,255,255,0.08)', color:'rgba(255,255,255,0.4)'},
+    };
+    return {...(map[cls]||map.gray), display:"inline-flex", alignItems:"center", padding:"2px 8px", borderRadius:6, fontSize:11, fontWeight:600, whiteSpace:"nowrap"};
+  };
+
+  const getTabRows = () => {
+    let r = weeks[cw].rows.filter(x => clsF(x.eventos) === tab);
+    if (search) { const q = search.toLowerCase(); r = r.filter(x => x.cliente.toLowerCase().includes(q) || x.conta.toLowerCase().includes(q)); }
+    if (empresa) r = r.filter(x => x.empresa === empresa);
+    if (evof && cw > 0) r = r.filter(x => getEvo(x.conta, cw).k === evof);
+    return r;
+  };
+
+  const getCmp = () => {
+    if (cw === 0) return null;
+    const pr = weeks[cw-1].rows, cr = weeks[cw].rows;
+    const pp = getTotals(pr), cp = getTotals(cr);
+    const mv = {pc:0,pa:0,mc:0,ma:0,ms:0,mels:0,mela:0,novo:0};
+    cr.forEach(r => { const e = getEvo(r.conta, cw); if (mv[e.k] !== undefined) mv[e.k]++; });
+    return {pp, cp, mv};
+  };
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target.result, {type:'array'});
+        const rows = [];
+        wb.SheetNames.forEach(name => {
+          const ws = wb.Sheets[name];
+          const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+          let sr = 0;
+          for (let i = 0; i < Math.min(5, data.length); i++) {
+            const v = data[i].map(x => String(x||'').toLowerCase());
+            if (v.some(x => x.includes('empresa')||x.includes('conta')||x.includes('fantasia')||x.includes('quantidade'))) { sr = i+1; break; }
+          }
+          for (let i = sr; i < data.length; i++) {
+            const r = data[i];
+            const emp = String(r[0]||'').trim(), cont = String(r[1]||'').trim(), cli = String(r[2]||'').trim(), ev = parseInt(String(r[3]||'0').replace(/\D/g,''))||0;
+            if (emp && cont && cli) rows.push({empresa:emp, conta:cont, cliente:cli, eventos:ev});
+          }
+        });
+        if (!rows.length) { alert('Nenhum dado encontrado. Colunas: Empresa, Conta, Fantasia, Quantidade de eventos.'); return; }
+        const today = new Date();
+        const mon = new Date(today); mon.setDate(today.getDate() - ((today.getDay()+6)%7));
+        const sun = new Date(mon); sun.setDate(mon.getDate()+6);
+        const fmt = d => String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0');
+        const label = fmt(mon)+' \u2013 '+fmt(sun);
+        setWeeks(prev => {
+          const ei = prev.findIndex(w => w.label === label);
+          if (ei >= 0) { const nw = [...prev]; nw[ei] = {label, rows}; setCw(ei); return nw; }
+          const nw = [...prev, {label, rows}]; setCw(nw.length-1); return nw;
+        });
+        setTab('critico'); setPage(0); setSearch(''); setEmpresa(''); setEvof('');
+      } catch(err) { alert('Erro ao ler arquivo: ' + err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  const w = weeks[cw];
+  const t = getTotals(w.rows);
+  const cmp = getCmp();
+  const tabRows = getTabRows();
+  const empresas = [...new Set(w.rows.map(r => r.empresa))].sort();
+  const start = page * PS;
+  const pageRows = tabRows.slice(start, start + PS);
+  const hp = cw > 0;
+  const prevRows = hp ? weeks[cw-1].rows : [];
+
+  const inpStyle = {padding:"7px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none"};
+
+  const dlt = (c, p) => {
+    const d = c - p;
+    if (d === 0) return React.createElement('span', {style:{color:'rgba(255,255,255,0.3)'}}, '\u2013');
+    if (d > 0) return React.createElement('span', {style:{color:'#f87171'}}, '+'+d);
+    return React.createElement('span', {style:{color:'#34d399'}}, ''+d);
+  };
+
+  return (
+    <div style={{animation:"fadeUp 0.3s ease"}}>
+      <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:10}}>
+        <div>
+          <div style={{fontSize:18, fontWeight:700, color:"#fff", marginBottom:3}}>Analise de Bases</div>
+          <div style={{fontSize:12, color:"rgba(255,255,255,0.35)"}}>Classificacao semanal de clientes &middot; critico / atencao / saudavel &middot; comparativo entre semanas</div>
+        </div>
+        <div style={{display:"flex", alignItems:"center", gap:8, flexWrap:"wrap"}}>
+          {weeks.map((wk,i) => (
+            <button key={i} onClick={() => { setCw(i); setTab('critico'); setPage(0); setSearch(''); setEmpresa(''); setEvof(''); }}
+              style={{padding:"5px 12px", borderRadius:20, border:"1px solid", fontSize:12, cursor:"pointer",
+                borderColor: i===cw ? "#a78bfa" : "rgba(255,255,255,0.12)",
+                background: i===cw ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.04)",
+                color: i===cw ? "#a78bfa" : "rgba(255,255,255,0.5)",
+                fontWeight: i===cw ? 700 : 400}}>
+              {wk.label}
+            </button>
+          ))}
+          <label style={{padding:"7px 14px", borderRadius:9, border:"1px solid rgba(167,139,250,0.4)", background:"rgba(167,139,250,0.1)", color:"#a78bfa", fontSize:12, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:6}}>
+            Importar semana
+            <input type="file" accept=".xlsx,.xls" style={{display:"none"}} onChange={handleFile} />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid-4" style={{marginBottom:16}}>
+        {[
+          {label:"Total monitorado", val:t.t, sub:w.label, color:"#38bdf8", bg:"rgba(56,189,248,0.06)", bc:"rgba(56,189,248,0.2)"},
+          {label:"Criticos", val:t.c, sub:Math.round(t.c/t.t*100)+"% da base", color:"#f87171", bg:"rgba(239,68,68,0.07)", bc:"rgba(239,68,68,0.25)"},
+          {label:"Atencao", val:t.a, sub:Math.round(t.a/t.t*100)+"% da base", color:"#fbbf24", bg:"rgba(251,191,36,0.07)", bc:"rgba(251,191,36,0.25)"},
+          {label:"Saudaveis", val:t.s, sub:Math.round(t.s/t.t*100)+"% da base", color:"#34d399", bg:"rgba(52,211,153,0.07)", bc:"rgba(52,211,153,0.25)"},
+        ].map((c,i) => (
+          <div key={i} style={{borderRadius:14, padding:"14px 18px", border:"1px solid", background:c.bg, borderColor:c.bc}}>
+            <div style={{fontSize:11, color:"rgba(255,255,255,0.4)", textTransform:"uppercase", letterSpacing:".05em", marginBottom:6}}>{c.label}</div>
+            <div style={{fontSize:28, fontWeight:700, color:c.color, lineHeight:1}}>{c.val.toLocaleString('pt-BR')}</div>
+            <div style={{fontSize:11, color:"rgba(255,255,255,0.25)", marginTop:4}}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {cmp && (
+        <div style={{background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, padding:"14px 18px", marginBottom:16, display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16}}>
+          <div>
+            <div style={{fontSize:11, color:"#f87171", textTransform:"uppercase", letterSpacing:".05em", marginBottom:8}}>Negativos</div>
+            {[["Pioraram critico",cmp.mv.pc,"#f87171"],["Pioraram atencao",cmp.mv.pa,"#fbbf24"],["Mantiveram critico",cmp.mv.mc,"#f87171"]].map(([l,v,c])=>(
+              <div key={l} style={{display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:"rgba(255,255,255,0.45)"}}>
+                <span>{l}</span><span style={{fontWeight:700, color:c}}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:11, color:"#34d399", textTransform:"uppercase", letterSpacing:".05em", marginBottom:8}}>Positivos</div>
+            {[["Melhoraram saudavel",cmp.mv.mels,"#34d399"],["Melhoraram atencao",cmp.mv.mela,"#fbbf24"],["Novos clientes",cmp.mv.novo,"#38bdf8"]].map(([l,v,c])=>(
+              <div key={l} style={{display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:"rgba(255,255,255,0.45)"}}>
+                <span>{l}</span><span style={{fontWeight:700, color:c}}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div>
+            <div style={{fontSize:11, color:"rgba(255,255,255,0.35)", textTransform:"uppercase", letterSpacing:".05em", marginBottom:8}}>{weeks[cw-1].label} vs {w.label}</div>
+            {[["Criticos",cmp.pp.c,cmp.cp.c],["Atencao",cmp.pp.a,cmp.cp.a],["Saudaveis",cmp.pp.s,cmp.cp.s]].map(([l,pv,cv])=>(
+              <div key={l} style={{display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:"rgba(255,255,255,0.45)"}}>
+                <span>{l}</span><span style={{fontWeight:600, color:"#fff"}}>{pv} {"->"} {cv} {dlt(cv,pv)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:14, padding:"14px 18px", marginBottom:16}}>
+        {[{label:"Criticos",n:t.c,color:"#f87171"},{label:"Atencao",n:t.a,color:"#fbbf24"},{label:"Saudaveis",n:t.s,color:"#34d399"}].map(b => {
+          const pct = Math.round(b.n/t.t*100);
+          const prevT = hp ? getTotals(weeks[cw-1].rows) : null;
+          const pn = prevT ? (b.label==='Criticos'?prevT.c:b.label==='Atencao'?prevT.a:prevT.s) : null;
+          const ppct = pn!==null ? Math.round(pn/t.t*100) : null;
+          return (
+            <div key={b.label} style={{display:"flex", alignItems:"center", gap:10, marginBottom:10}}>
+              <span style={{fontSize:11, color:"rgba(255,255,255,0.4)", width:70, textAlign:"right"}}>{b.label}</span>
+              <div style={{flex:1}}>
+                {ppct!==null && <div style={{width:"100%", height:6, background:"rgba(255,255,255,0.05)", borderRadius:3, overflow:"hidden", marginBottom:3}}>
+                  <div style={{width:ppct+"%", height:"100%", background:b.color, opacity:.3, borderRadius:3}}/>
+                </div>}
+                <div style={{width:"100%", height:14, background:"rgba(255,255,255,0.05)", borderRadius:3, overflow:"hidden"}}>
+                  <div style={{width:pct+"%", height:"100%", background:b.color, borderRadius:3, display:"flex", alignItems:"center", paddingLeft:6, fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.85)", minWidth:2}}>{b.n}</div>
+                </div>
+              </div>
+              <span style={{fontSize:11, color:"rgba(255,255,255,0.35)", width:36, textAlign:"right"}}>{pct}%</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{display:"flex", gap:6, marginBottom:14, borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+        {[["critico","Criticos ("+t.c+")", "#f87171"],["atencao","Atencao ("+t.a+")", "#fbbf24"],["saudavel","Saudaveis ("+t.s+")", "#34d399"]].map(([k,l,c]) => (
+          <button key={k} onClick={() => { setTab(k); setPage(0); }}
+            style={{background:"transparent", border:"none", padding:"7px 16px", fontSize:13, cursor:"pointer",
+              color: tab===k ? c : "rgba(255,255,255,0.4)", fontWeight: tab===k ? 700 : 400,
+              borderBottom:"2px solid "+(tab===k ? c : "transparent"), marginBottom:-1, transition:"all 0.15s"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:"flex", gap:8, marginBottom:12, flexWrap:"wrap"}}>
+        <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }} placeholder="Buscar cliente ou conta..." style={{...inpStyle, flex:1, minWidth:200}} />
+        <select value={empresa} onChange={e => { setEmpresa(e.target.value); setPage(0); }} style={inpStyle}>
+          <option value="">Todas as empresas</option>
+          {empresas.map(emp => <option key={emp} value={emp}>{emp.replace(/^\d+\.\s/,'')}</option>)}
+        </select>
+        {hp && (
+          <select value={evof} onChange={e => { setEvof(e.target.value); setPage(0); }} style={inpStyle}>
+            <option value="">Toda evolucao</option>
+            <option value="pc">Piorou critico</option>
+            <option value="pa">Piorou atencao</option>
+            <option value="mc">Manteve critico</option>
+            <option value="ma">Manteve atencao</option>
+            <option value="ms">Manteve saudavel</option>
+            <option value="mels">Melhorou saudavel</option>
+            <option value="mela">Melhorou atencao</option>
+            <option value="novo">Novo cliente</option>
+          </select>
+        )}
+      </div>
+
+      <div style={{background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:14, overflow:"hidden"}}>
+        <div className="table-scroll">
+          <table style={{width:"100%", borderCollapse:"collapse", fontSize:13, tableLayout:"fixed"}}>
+            <colgroup>
+              <col style={{width:100}}/><col/><col style={{width:140}}/><col style={{width:85}}/>
+              {hp && <col style={{width:80}}/>}
+              {hp && <col style={{width:160}}/>}
+            </colgroup>
+            <thead>
+              <tr style={{borderBottom:"1px solid rgba(255,255,255,0.07)"}}>
+                {["Conta","Cliente","Empresa","Eventos"].concat(hp?["Ant.","Evolucao"]:[]).map(h => (
+                  <th key={h} style={{padding:"10px 14px", textAlign:h==="Eventos"||h==="Ant."?"right":"left", fontSize:11, color:"rgba(255,255,255,0.35)", fontWeight:600, background:"rgba(255,255,255,0.02)", textTransform:"uppercase", letterSpacing:".05em"}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.length === 0 && (
+                <tr><td colSpan={hp?6:4} style={{padding:24, textAlign:"center", color:"rgba(255,255,255,0.2)", fontSize:13}}>Nenhum cliente encontrado</td></tr>
+              )}
+              {pageRows.map((r,i) => {
+                const ev = hp ? getEvo(r.conta, cw) : null;
+                const pv = hp ? prevRows.find(p => p.conta.trim() === r.conta.trim()) : null;
+                return (
+                  <tr key={i} style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <td style={{padding:"9px 14px", fontFamily:"monospace", fontSize:11, color:"rgba(255,255,255,0.4)"}}>{r.conta}</td>
+                    <td style={{padding:"9px 14px", color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}} title={r.cliente}>{r.cliente}</td>
+                    <td style={{padding:"9px 14px", fontSize:11, color:"rgba(255,255,255,0.35)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>{r.empresa.replace(/^\d+\.\s/,'')}</td>
+                    <td style={{padding:"9px 14px", textAlign:"right", fontWeight:700, color:"#fff"}}>{r.eventos.toLocaleString('pt-BR')}</td>
+                    {hp && <td style={{padding:"9px 14px", textAlign:"right", color:"rgba(255,255,255,0.3)"}}>{pv ? pv.eventos.toLocaleString('pt-BR') : "—"}</td>}
+                    {hp && <td style={{padding:"9px 14px"}}>{ev && <span style={evoBadge(ev.cls)}>{ev.label}</span>}</td>}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="pgn">
+          <span className="pgn-info">{start+1}–{Math.min(start+PS,tabRows.length)} de {tabRows.length} clientes</span>
+          <button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>{"<"}</button>
+          <button className="pgn-btn" disabled={start+PS>=tabRows.length} onClick={()=>setPage(p=>p+1)}>{">"}</button>
+        </div>
+      </div>
+
+      {cw === 0 && (
+        <div style={{marginTop:16, padding:"10px 16px", borderRadius:10, background:"rgba(167,139,250,0.06)", border:"1px solid rgba(167,139,250,0.2)", fontSize:12, color:"rgba(167,139,250,0.7)"}}>
+          Semana base carregada (11/05-17/05). Importe o arquivo da proxima semana para ver a evolucao automatica de cada cliente. Colunas esperadas: Empresa - Conta - Fantasia - Quantidade de eventos
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -4039,7 +4389,7 @@ function App() {
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
-    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários"};
+    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários","analise":"Análise de Bases"};
     document.title=`${nomes[aba]||"Dashboard"} — Central de Monitoramento VTR`;
   },[aba]);
 
@@ -4121,7 +4471,7 @@ function App() {
   useEffect(()=>{
     if(!usuario) return;
     const isAdminUser = usuario.perfil==="admin";
-    const abasDisponiveis = ["dashboard","portaria","filiais","mapa","comparativos","clientes","relatorios",...(isAdminUser?["importacao","usuarios"]:[])];
+    const abasDisponiveis = ["dashboard","portaria","filiais","mapa","comparativos","clientes","relatorios","analise",...(isAdminUser?["importacao","usuarios"]:[])];
     const handler=(e)=>{
       // Não ativa se o foco está em input/textarea
       if(["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
@@ -4411,6 +4761,7 @@ function App() {
         <TabBtn active={aba==="relatorios"} onClick={()=>setAba("relatorios")} accent="#fb923c">📋 Relatórios{aba==="relatorios"&&mesBadge}</TabBtn>
         {isAdmin&&<TabBtn active={aba==="importacao"} onClick={()=>setAba("importacao")}>📥 Importação{clients.length>0&&<span style={{ marginLeft:6,background:"rgba(56,189,248,0.2)",color:"#38bdf8",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{clients.length}</span>}</TabBtn>}
         {isAdmin&&<TabBtn active={aba==="usuarios"} onClick={()=>setAba("usuarios")} accent="#f87171">👑 Usuários</TabBtn>}
+        <TabBtn active={aba==="analise"} onClick={()=>setAba("analise")} accent="#a78bfa">📈 Análise de Bases</TabBtn>
         {/* indicador global quando mês filtrado */}
         {mesFiltroGlobal!=="Todos"&&(
           <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:8,padding:"5px 12px",borderRadius:99,background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.2)",fontSize:11,color:"#38bdf8",fontWeight:600 }}>
@@ -4519,6 +4870,7 @@ function App() {
         </div>
       )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
+      {aba==="analise"&&<AnaliseBases />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
         Custo por deslocamento: R$ {CUSTO_FISCAL} · Dados em nuvem · Portaria Inteligente separada automaticamente
