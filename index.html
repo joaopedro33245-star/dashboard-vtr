@@ -4050,10 +4050,20 @@ async function sbSalvarBaseAtiva(sb, rows) {
 async function sbCarregarBaseAtiva(sb) {
   if(!sbReady() || !sb) return null;
   try {
-    const {data, error} = await sb.from('analise_base_ativa')
-      .select('*').order('cliente', {ascending:true}).limit(10000);
-    if(error) throw error;
-    return data || [];
+    const PAGE = 1000;
+    let all = [], from = 0, done = false;
+    while(!done) {
+      const {data, error} = await sb.from('analise_base_ativa')
+        .select('*')
+        .order('cliente', {ascending:true})
+        .range(from, from + PAGE - 1);
+      if(error) throw error;
+      if(!data || data.length === 0) { done = true; break; }
+      all = all.concat(data);
+      if(data.length < PAGE) done = true;
+      else from += PAGE;
+    }
+    return all;
   } catch(e) { console.warn('sbCarregarBaseAtiva:', e.message); return null; }
 }
 
@@ -4102,9 +4112,18 @@ async function sbCarregarSemanas(sb) {
     if(!semanas || !semanas.length) return [];
 
     // Carrega todos os clientes de uma vez
-    const {data: clientes, error: e2} = await sb.from('analise_semana_clientes')
-      .select('semana_label,empresa,conta,cliente,eventos').limit(50000);
-    if(e2) throw e2;
+    // Paginação — suporta bases grandes sem limite
+    let clientes = [], _from = 0, _done = false;
+    while(!_done) {
+      const {data: _lote, error: _err} = await sb.from('analise_semana_clientes')
+        .select('semana_label,empresa,conta,cliente,eventos')
+        .range(_from, _from + 999);
+      if(_err) throw _err;
+      if(!_lote || _lote.length === 0) break;
+      clientes = clientes.concat(_lote);
+      if(_lote.length < 1000) _done = true;
+      else _from += 1000;
+    }
 
     // Agrupa por semana
     return semanas.map(s => ({
