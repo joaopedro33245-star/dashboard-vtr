@@ -3371,24 +3371,12 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   const piClienteKeys=useMemo(()=>{
     const s=new Set();
     // 1. Pelo nome do cliente
-    let porNome=0;
     for(const c of clients)
-      if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE")){
+      if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))
         s.add(`${c.codigo_cliente}||${c.filial}`);
-        porNome++;
-      }
     // 2. Pelo código+filial que aparece em deslocamentos PI
-    const dispPI=dispatches.filter(x=>x.portaria_inteligente);
-    for(const d of dispPI) s.add(`${d.codigo_cliente}||${d.filial}`);
-    console.log('[piClienteKeys] dispPI:',dispPI.length,'| porNome:',porNome,'| total keys:',s.size);
-    // 3. Verificar cruzamento com clients
-    let clientesPI=clients.filter(c=>s.has(`${c.codigo_cliente}||${c.filial}`));
-    console.log('[piClienteKeys] clients que cruzam:',clientesPI.length);
-    if(clientesPI.length===0&&dispPI.length>0){
-      // Debug: mostrar amostra de chaves
-      const dKey=[...s][0]; const cKey=clients.length>0?`${clients[0].codigo_cliente}||${clients[0].filial}`:'';
-      console.log('[piClienteKeys] Exemplo dispatch key:',dKey,'| Exemplo client key:',cKey);
-    }
+    for(const d of dispatches.filter(x=>x.portaria_inteligente))
+      s.add(`${d.codigo_cliente}||${d.filial}`);
     return s;
   },[dispatches,clients]);
 
@@ -4267,6 +4255,7 @@ function BaseAtivaTab({supabaseClient, dispatches, clients}) {
   const [cidadeFil, setCidadeFil] = React.useState('Todas');
   const [tipoFil,   setTipoFil]   = React.useState('Todos'); // Todos | Portaria | Normal
   const [sbStatus,  setSbStatus]  = React.useState('');
+  const [editando,  setEditando]  = React.useState(null); // cliente sendo editado
   const PS = 20;
 
   // Carregar do Supabase ao montar
@@ -4418,8 +4407,65 @@ function BaseAtivaTab({supabaseClient, dispatches, clients}) {
   const isErr = msg.startsWith('err:');
   const msgText = msg.replace(/^(ok|err):/,'');
 
+  // Salvar edição
+  const salvarEdicao = async (rowAtualizado) => {
+    const novaBase = baseRows.map(r =>
+      r.conta === rowAtualizado.conta && r.empresa === rowAtualizado.empresa ? rowAtualizado : r
+    );
+    await saveBase(novaBase);
+    setEditando(null);
+  };
+
   return (
     <div style={{animation:'fadeUp 0.3s ease'}}>
+
+      {/* Modal de edição */}
+      {editando && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}
+          onClick={e=>e.target===e.currentTarget&&setEditando(null)}>
+          <div style={{background:'#0d1424',border:'1px solid rgba(255,255,255,0.1)',borderRadius:20,width:'100%',maxWidth:560,padding:28}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
+              <div style={{fontSize:16,fontWeight:700,color:'#fff'}}>✏️ Editar cliente</div>
+              <button onClick={()=>setEditando(null)} style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
+              {[
+                ['Cliente','cliente','text'],
+                ['Empresa','empresa','text'],
+                ['Mensalidade','mensalidade','text'],
+                ['Status','status','text'],
+                ['Área','area','text'],
+                ['Cidade','cidade','text'],
+                ['Bairro','bairro','text'],
+              ].map(([label,field])=>(
+                <div key={field}>
+                  <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>{label}</div>
+                  <input
+                    value={editando[field]||''}
+                    onChange={e=>setEditando({...editando,[field]:e.target.value})}
+                    style={{width:'100%',padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none',boxSizing:'border-box'}}
+                  />
+                </div>
+              ))}
+              <div>
+                <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Conta</div>
+                <input value={editando.conta||''} disabled style={{width:'100%',padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.06)',background:'rgba(255,255,255,0.02)',color:'rgba(255,255,255,0.3)',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
+              </div>
+            </div>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>salvarEdicao(editando)}
+                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                💾 Salvar alterações
+              </button>
+              <button onClick={()=>setEditando(null)}
+                style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Cabeçalho */}
       <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12}}>
         <div>
@@ -4524,7 +4570,7 @@ function BaseAtivaTab({supabaseClient, dispatches, clients}) {
                 </colgroup>
                 <thead>
                   <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro','Deslocamentos'].map(h=>(
+                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro','Deslocamentos',''].map(h=>(
                       <th key={h} style={{padding:'10px 14px',textAlign:h==='Deslocamentos'||h==='Mensalidade'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
                     ))}
                   </tr>
@@ -4551,6 +4597,12 @@ function BaseAtivaTab({supabaseClient, dispatches, clients}) {
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.5)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cidade}>{r.cidade||'—'}</td>
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.bairro}>{r.bairro||'—'}</td>
                       <td style={{padding:'8px 14px',textAlign:'right',fontWeight:desl>0?700:400,color:desl>0?'#f472b6':'rgba(255,255,255,0.2)'}}>{desl||'—'}</td>
+                      <td style={{padding:'8px 14px',textAlign:'center'}}>
+                        <button onClick={()=>setEditando({...r})}
+                          style={{background:'rgba(56,189,248,0.1)',border:'1px solid rgba(56,189,248,0.2)',color:'#38bdf8',borderRadius:6,padding:'3px 9px',cursor:'pointer',fontSize:11}}>
+                          ✏️
+                        </button>
+                      </td>
                     </tr>
                   )})}
                 </tbody>
@@ -5912,7 +5964,6 @@ END $$;`;
   );
 }
 
-
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -6030,27 +6081,19 @@ function App() {
   },[usuario]);
 
   async function fetchAll(table,order,ascending=true){
-    // 1. Contar total real
     const{count,error:cErr}=await supabaseClient.from(table).select('*',{count:'exact',head:true});
     if(cErr) throw new Error('Erro ao contar '+table+': '+cErr.message);
     const total=count||0;
     if(total===0) return [];
     console.log('[fetchAll] '+table+': '+total+' registros');
-
-    // 2. Buscar em páginas paralelas de 1000 (mais rápido)
-    const PAGE=1000;
+    const PAGE=1000,GROUP=5;
     const numPages=Math.ceil(total/PAGE);
-    // Paralelo em grupos de 5 para não sobrecarregar
-    const GROUP=5;
     let all=[];
     for(let g=0;g<numPages;g+=GROUP){
       const batch=[];
       for(let p=g;p<Math.min(g+GROUP,numPages);p++){
-        const from=p*PAGE;
-        const to=Math.min(from+PAGE-1,total-1);
-        batch.push(
-          supabaseClient.from(table).select('*').order(order,{ascending}).range(from,to)
-        );
+        const from=p*PAGE,to=Math.min(from+PAGE-1,total-1);
+        batch.push(supabaseClient.from(table).select('*').order(order,{ascending}).range(from,to));
       }
       const results=await Promise.all(batch);
       for(const{data,error} of results){
@@ -6060,7 +6103,7 @@ function App() {
       console.log('[fetchAll] '+table+': '+all.length+'/'+total);
       if(g+GROUP<numPages) await new Promise(r=>setTimeout(r,100));
     }
-    console.log('[fetchAll] '+table+' concluído: '+all.length+' registros');
+    console.log('[fetchAll] '+table+' concluído: '+all.length);
     return all;
   }
 
@@ -6078,22 +6121,7 @@ function App() {
   }
 
   function salvarCache(cls,dis){
-    try{
-      const payload=JSON.stringify({ts:Date.now(),cls,dis});
-      // localStorage tem limite ~5MB — só salva se couber
-      if(payload.length < 4*1024*1024){
-        localStorage.setItem(CACHE_KEY,payload);
-        console.log('[Cache] Salvo: '+(payload.length/1024).toFixed(0)+'KB');
-      } else {
-        // Volume grande: salva só clientes (dispatches buscamos sempre do Supabase)
-        const payloadMin=JSON.stringify({ts:Date.now(),cls,dis:[]});
-        localStorage.setItem(CACHE_KEY,payloadMin);
-        console.log('[Cache] Volume grande ('+( payload.length/1024).toFixed(0)+'KB) — cache só de clientes');
-      }
-    }catch(e){
-      console.warn('[Cache] Erro ao salvar:',e.message);
-      try{localStorage.removeItem(CACHE_KEY);}catch{}
-    }
+    try{localStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),cls,dis}));}catch{}
   }
   function lerCache(){
     try{
@@ -6101,6 +6129,7 @@ function App() {
       if(!raw)return null;
       const{ts,cls,dis}=JSON.parse(raw);
       if(Date.now()-ts>CACHE_TTL)return null;
+      if(!dis||dis.length===0)return null;
       return{cls,dis};
     }catch{return null;}
   }
