@@ -4256,44 +4256,20 @@ async function sbCarregarTratativas(sb, conta, empresa) {
 }
 
 
-// ════════════════════════════════════════════════════
-//  BASE ATIVA
-// ════════════════════════════════════════════════════
-function BaseAtivaTab({supabaseClient}) {
+function BaseAtivaTab({supabaseClient, dispatches, clients}) {
   const [baseRows, setBaseRows] = React.useState(()=>{
     try{ return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{return [];}
   });
-  const [search, setSearch] = React.useState('');
-  const [page, setPage] = React.useState(0);
-  const [msg, setMsg] = React.useState('');
+  const [search,    setSearch]    = React.useState('');
+  const [page,      setPage]      = React.useState(0);
+  const [msg,       setMsg]       = React.useState('');
+  const [filialFil, setFilialFil] = React.useState('Todas');
+  const [cidadeFil, setCidadeFil] = React.useState('Todas');
+  const [tipoFil,   setTipoFil]   = React.useState('Todos'); // Todos | Portaria | Normal
+  const [sbStatus,  setSbStatus]  = React.useState('');
   const PS = 20;
 
-  const [sbStatus, setSbStatus] = React.useState('');
-
-  const saveBase = async (rows) => {
-    setBaseRows(rows);
-    try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(rows)); }catch{}
-    if(rows.length > 0) {
-      setSbStatus('saving');
-      const result = await sbSalvarBaseAtiva(supabaseClient, rows);
-      const salvos = result?.salvos ?? (result === true ? rows.length : 0);
-      const erros  = result?.erros  ?? 0;
-      if(salvos === rows.length) {
-        setSbStatus('ok:'+salvos);
-      } else if(salvos > 0) {
-        setSbStatus('parcial:'+salvos+'/'+rows.length+' salvos ('+erros+' erros)');
-      } else {
-        setSbStatus('local');
-      }
-      setTimeout(()=>setSbStatus(''), 6000);
-    } else {
-      setSbStatus('clearing');
-      await sbLimparBaseAtiva(supabaseClient);
-      setSbStatus('');
-    }
-  };
-
-  // Carrega do Supabase ao montar
+  // Carregar do Supabase ao montar
   React.useEffect(()=>{
     (async()=>{
       setSbStatus('loading');
@@ -4308,6 +4284,60 @@ function BaseAtivaTab({supabaseClient}) {
       }
     })();
   }, [supabaseClient]);
+
+  const saveBase = async (rows) => {
+    setBaseRows(rows);
+    try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(rows)); }catch{}
+    if(rows.length > 0) {
+      setSbStatus('saving');
+      const result = await sbSalvarBaseAtiva(supabaseClient, rows);
+      const salvos = result?.salvos ?? (result === true ? rows.length : 0);
+      const erros  = result?.erros  ?? 0;
+      if(salvos === rows.length) setSbStatus('ok:'+salvos);
+      else if(salvos > 0) setSbStatus('parcial:'+salvos+'/'+rows.length+' salvos ('+erros+' erros)');
+      else setSbStatus('local');
+      setTimeout(()=>setSbStatus(''), 6000);
+    } else {
+      await sbLimparBaseAtiva(supabaseClient);
+      setSbStatus('');
+    }
+  };
+
+  // Mapa de deslocamentos por conta+filial
+  const dispMap = React.useMemo(()=>{
+    const map = {};
+    (dispatches||[]).forEach(d=>{
+      const key = (d.codigo_cliente||'').toLowerCase().trim()+'||'+(d.filial||'').toLowerCase().trim();
+      map[key] = (map[key]||0) + 1;
+    });
+    return map;
+  }, [dispatches]);
+
+  // Cruzar base ativa com clients do Supabase para pegar codigo_cliente
+  const codigoMap = React.useMemo(()=>{
+    const map = {};
+    (clients||[]).forEach(c=>{
+      const key = (c.nome_cliente||'').toLowerCase().trim();
+      const conta = (c.codigo_cliente||'').toLowerCase().trim();
+      if(conta) map[conta] = c;
+    });
+    return map;
+  }, [clients]);
+
+  // Função para buscar deslocamentos de um cliente da base ativa
+  const getDeslocamentos = (row) => {
+    const conta = (row.conta||'').toLowerCase().trim();
+    const emp   = (row.empresa||'').toLowerCase().trim();
+    // Tenta direto por conta+empresa
+    let total = 0;
+    Object.entries(dispMap).forEach(([key, count]) => {
+      const [dc] = key.split('||');
+      if(dc === conta) total += count;
+    });
+    return total;
+  };
+
+  const isPortaria = (row) => (row.cliente||'').toUpperCase().includes('PORTARIA');
 
   const handleImport = (e) => {
     const file = e.target.files[0]; if(!file) return;
@@ -4332,7 +4362,7 @@ function BaseAtivaTab({supabaseClient}) {
                 else if(val.includes('cliente')||val.includes('fantasia')) colMap.cliente=idx;
                 else if(val.includes('mensalidade')||val.includes('mensal')) colMap.mensalidade=idx;
                 else if(val.includes('status')) colMap.status=idx;
-                else if(val.includes('area')||val.includes('área')) colMap.area=idx;
+                else if(val.includes('área')||val==='area') colMap.area=idx;
                 else if(val.includes('cidade')||val.includes('city')) colMap.cidade=idx;
                 else if(val.includes('bairro')||val.includes('distrito')) colMap.bairro=idx;
               });
@@ -4341,9 +4371,9 @@ function BaseAtivaTab({supabaseClient}) {
           }
           for(let i=sr; i<data.length; i++) {
             const r = data[i];
-            const emp  = String(r[colMap.empresa]||'').trim();
-            const cont = String(r[colMap.conta]||'').trim();
-            const cli  = String(r[colMap.cliente]||'').trim();
+            const emp    = String(r[colMap.empresa]||'').trim();
+            const cont   = String(r[colMap.conta]||'').trim();
+            const cli    = String(r[colMap.cliente]||'').trim();
             const mens   = String(r[colMap.mensalidade]||'').trim();
             const stat   = String(r[colMap.status]||'Ativo').trim();
             const area   = String(r[colMap.area]||'').trim();
@@ -4352,7 +4382,7 @@ function BaseAtivaTab({supabaseClient}) {
             if(emp&&cont&&cli) rows.push({empresa:emp,conta:cont,cliente:cli,mensalidade:mens,status:stat,area,cidade,bairro});
           }
         });
-        if(!rows.length){setMsg('Nenhum dado encontrado');return;}
+        if(!rows.length){setMsg('err:Nenhum dado encontrado');return;}
         saveBase(rows);
         setMsg('ok:'+rows.length+' clientes importados com sucesso!');
         setPage(0); setSearch('');
@@ -4363,40 +4393,70 @@ function BaseAtivaTab({supabaseClient}) {
     e.target.value='';
   };
 
+  // Filtros
+  const filiais  = ['Todas', ...[...new Set(baseRows.map(r=>r.empresa).filter(Boolean))].sort()];
+  const cidades  = ['Todas', ...[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].sort()];
+
   const filtered = baseRows.filter(r => {
-    if(!search) return true;
-    const q=search.toLowerCase();
-    return (r.cliente||'').toLowerCase().includes(q)||(r.conta||'').toLowerCase().includes(q)||(r.empresa||'').toLowerCase().includes(q);
+    if(filialFil !== 'Todas' && r.empresa !== filialFil) return false;
+    if(cidadeFil !== 'Todas' && r.cidade !== cidadeFil) return false;
+    if(tipoFil === 'Portaria' && !isPortaria(r)) return false;
+    if(tipoFil === 'Normal'   &&  isPortaria(r)) return false;
+    if(search){
+      const q=search.toLowerCase();
+      if(!r.cliente.toLowerCase().includes(q)&&!r.conta.toLowerCase().includes(q)&&!(r.empresa||'').toLowerCase().includes(q)) return false;
+    }
+    return true;
   });
+
   const total=filtered.length, start=page*PS, pageRows=filtered.slice(start,start+PS);
+  const portariaCount = baseRows.filter(isPortaria).length;
+  const comDesl = baseRows.filter(r=>getDeslocamentos(r)>0).length;
+
   const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
-  const isOk = msg.startsWith('ok:');
+  const isOk  = msg.startsWith('ok:');
   const isErr = msg.startsWith('err:');
   const msgText = msg.replace(/^(ok|err):/,'');
 
   return (
     <div style={{animation:'fadeUp 0.3s ease'}}>
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:24,flexWrap:'wrap',gap:12}}>
+      {/* Cabeçalho */}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12}}>
         <div>
           <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
             <div style={{width:8,height:8,borderRadius:'50%',background:'#06b6d4',boxShadow:'0 0 8px #06b6d4'}}/>
             <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>Base Ativa</span>
           </div>
           <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>
-            Cadastro de clientes ativos &middot; vincula mensalidade, status e &aacute;rea na An&aacute;lise de Bases
+            Cadastro completo · deslocamentos cruzados automaticamente · portaria identificada pelo nome
           </div>
         </div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           <label style={{padding:'7px 16px',borderRadius:10,border:'1px solid rgba(6,182,212,0.5)',background:'rgba(6,182,212,0.1)',color:'#06b6d4',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:7}}>
-            &#128229; Importar base (.xlsx)
+            📥 Importar base (.xlsx)
             <input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleImport}/>
           </label>
           {baseRows.length>0&&<button onClick={()=>{if(window.confirm('Limpar toda a base ativa?'))saveBase([]);}}
             style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.08)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-            &#128465; Limpar base
+            🗑️ Limpar base
           </button>}
         </div>
       </div>
+
+      {/* Status Supabase */}
+      {sbStatus&&<div style={{marginBottom:12,padding:'8px 14px',borderRadius:10,fontSize:12,display:'flex',alignItems:'center',gap:8,
+        background:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.06)':sbStatus==='loading'?'rgba(56,189,248,0.06)':'rgba(251,191,36,0.06)',
+        border:'1px solid '+(sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.2)':sbStatus==='loading'?'rgba(56,189,248,0.2)':'rgba(251,191,36,0.2)'),
+        color:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'#34d399':sbStatus==='loading'?'#38bdf8':'#fbbf24'}}>
+        <div style={{width:7,height:7,borderRadius:'50%',background:'currentColor',flexShrink:0}}/>
+        {sbStatus==='loading'?'Carregando clientes do Supabase...'
+          :sbStatus==='saving'?'Salvando no Supabase...'
+          :sbStatus.startsWith('loaded:')?'Carregados '+sbStatus.split(':')[1]+' clientes do Supabase ✓'
+          :sbStatus.startsWith('ok:')?'Salvo no Supabase: '+sbStatus.split(':')[1]+' clientes ✓'
+          :sbStatus.startsWith('parcial:')?'⚠️ Salvamento parcial: '+sbStatus.split(':')[1]
+          :sbStatus==='local'?'Supabase indisponível — salvo localmente'
+          :'Limpando...'}
+      </div>}
 
       {msg&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,
         background:isOk?'rgba(52,211,153,0.08)':isErr?'rgba(239,68,68,0.08)':'rgba(56,189,248,0.08)',
@@ -4404,77 +4464,84 @@ function BaseAtivaTab({supabaseClient}) {
         fontSize:13,color:isOk?'#34d399':isErr?'#f87171':'#38bdf8'}}>
         {isOk?'✅ ':isErr?'❌ ':''}{msgText}
       </div>}
-      {sbStatus&&<div style={{marginBottom:12,padding:'8px 14px',borderRadius:10,fontSize:12,display:'flex',alignItems:'center',gap:8,
-        background:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.06)':sbStatus==='loading'?'rgba(56,189,248,0.06)':'rgba(251,191,36,0.06)',
-        border:'1px solid '+(sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.2)':sbStatus==='loading'?'rgba(56,189,248,0.2)':'rgba(251,191,36,0.2)'),
-        color:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'#34d399':sbStatus==='loading'?'#38bdf8':'#fbbf24'}}>
-        <div style={{width:7,height:7,borderRadius:'50%',background:'currentColor',flexShrink:0,animation:sbStatus==='loading'||sbStatus==='saving'?'pulse 1s infinite':'none'}}/>
-        {sbStatus==='loading'?'Carregando clientes do Supabase...'
-          :sbStatus==='saving'?'Salvando no Supabase...'
-          :sbStatus.startsWith('loaded:')?'Carregados '+sbStatus.split(':')[1]+' clientes do Supabase ✓'
-          :sbStatus==='loaded'?'Carregado do Supabase ✓'
-          :sbStatus.startsWith('ok')?'Salvo no Supabase ✓'
-          :sbStatus==='local'?'Salvo localmente (Supabase indisponível)'
-          :'Limpando...'}
-      </div>}
 
       {baseRows.length===0?(
         <div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:16,padding:'56px 24px',textAlign:'center'}}>
-          <div style={{fontSize:44,marginBottom:14,opacity:.15}}>&#128451;</div>
+          <div style={{fontSize:44,marginBottom:14,opacity:.15}}>🗂️</div>
           <div style={{fontSize:15,fontWeight:600,color:'rgba(255,255,255,0.3)',marginBottom:8}}>Nenhuma base importada</div>
           <div style={{fontSize:12,color:'rgba(255,255,255,0.18)',lineHeight:1.8}}>
             Importe um .xlsx com as colunas:<br/>
-            <code style={{color:'rgba(6,182,212,0.7)',fontSize:11}}>Empresa &middot; Conta &middot; Cliente &middot; Mensalidade &middot; Status &middot; &Aacute;rea &middot; Cidade &middot; Bairro</code><br/>
-            <span style={{fontSize:11,color:'rgba(255,255,255,0.15)'}}>As colunas s&atilde;o detectadas automaticamente pelo cabe&ccedil;alho</span>
+            <code style={{color:'rgba(6,182,212,0.7)',fontSize:11}}>Empresa · Conta · Cliente · Mensalidade · Status · Área · Cidade · Bairro</code><br/>
+            <span style={{fontSize:11,color:'rgba(255,255,255,0.15)'}}>As colunas são detectadas automaticamente pelo cabeçalho</span>
           </div>
         </div>
       ):(
         <React.Fragment>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+          {/* Cards de resumo */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:20}}>
             {[
               ['Total',baseRows.length,'#06b6d4'],
               ['Ativos',baseRows.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],
-              ['Com mensalidade',baseRows.filter(r=>r.mensalidade&&r.mensalidade!=='0'&&r.mensalidade!=='').length,'#fbbf24'],
-              ['Portaria',baseRows.filter(r=>(r.cliente||'').toUpperCase().includes('PORTARIA')).length,'#a78bfa'],
-              ['Cidades',[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].length,'#06b6d4'],
+              ['Portaria',portariaCount,'#a78bfa'],
+              ['Com deslocamento',comDesl,'#f472b6'],
+              ['Cidades',[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].length,'#fbbf24'],
             ].map(([l,v,c])=>(
               <div key={l} style={{borderRadius:14,padding:'14px 18px',border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.03)'}}>
                 <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
                   <span style={{width:7,height:7,borderRadius:'50%',background:c,display:'block',flexShrink:0}}/>{l}
                 </div>
-                <div style={{fontSize:28,fontWeight:700,color:c,lineHeight:1}}>{v.toLocaleString('pt-BR')}</div>
+                <div style={{fontSize:26,fontWeight:700,color:c,lineHeight:1}}>{v.toLocaleString('pt-BR')}</div>
               </div>
             ))}
           </div>
 
-          <div style={{marginBottom:12}}>
+          {/* Filtros */}
+          <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
             <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}
-              placeholder="&#128269;  Buscar cliente, conta ou empresa..."
-              style={{...inp,width:'100%',maxWidth:440}}/>
+              placeholder="🔍  Buscar cliente, conta ou empresa..."
+              style={{...inp,flex:1,minWidth:220}}/>
+            <select value={filialFil} onChange={e=>{setFilialFil(e.target.value);setPage(0);}} style={inp}>
+              {filiais.map(f=><option key={f} value={f}>{f==='Todas'?'Todas as filiais':f}</option>)}
+            </select>
+            {cidades.length>2&&<select value={cidadeFil} onChange={e=>{setCidadeFil(e.target.value);setPage(0);}} style={{...inp,borderColor:cidadeFil!=='Todas'?'rgba(251,191,36,0.5)':'rgba(255,255,255,0.1)',color:cidadeFil!=='Todas'?'#fbbf24':'#fff'}}>
+              {cidades.map(c=><option key={c} value={c}>{c==='Todas'?'🏙 Todas as cidades':'🏙 '+c}</option>)}
+            </select>}
+            <select value={tipoFil} onChange={e=>{setTipoFil(e.target.value);setPage(0);}} style={{...inp,borderColor:tipoFil!=='Todos'?'rgba(167,139,250,0.5)':'rgba(255,255,255,0.1)',color:tipoFil!=='Todos'?'#a78bfa':'#fff'}}>
+              <option value="Todos">🔀 Normal + Portaria</option>
+              <option value="Portaria">🏢 Somente Portaria Int.</option>
+              <option value="Normal">🚗 Somente Normal</option>
+            </select>
           </div>
 
+          {/* Tabela */}
           <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
             <div className="table-scroll">
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
                 <colgroup>
                   <col style={{width:90}}/><col/><col style={{width:120}}/>
-                  <col style={{width:100}}/><col style={{width:75}}/><col style={{width:85}}/>
-                  <col style={{width:100}}/><col style={{width:100}}/>
+                  <col style={{width:95}}/><col style={{width:75}}/><col style={{width:85}}/>
+                  <col style={{width:95}}/><col style={{width:85}}/><col style={{width:80}}/>
                 </colgroup>
                 <thead>
                   <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro'].map(h=>(
-                      <th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
+                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro','Deslocamentos'].map(h=>(
+                      <th key={h} style={{padding:'10px 14px',textAlign:h==='Deslocamentos'||h==='Mensalidade'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map((r,i)=>(
+                  {pageRows.map((r,i)=>{
+                    const desl = getDeslocamentos(r);
+                    const pi   = isPortaria(r);
+                    return(
                     <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)'}}>
                       <td style={{padding:'8px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{r.conta}</td>
-                      <td style={{padding:'8px 14px',color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>{r.cliente}</td>
+                      <td style={{padding:'8px 14px',color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>
+                        {r.cliente}
+                        {pi&&<span style={{marginLeft:6,background:'rgba(167,139,250,0.15)',color:'#a78bfa',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:600}}>PI</span>}
+                      </td>
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.35)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
-                      <td style={{padding:'8px 14px',fontSize:12,color:r.mensalidade?'#34d399':'rgba(255,255,255,0.2)'}}>{r.mensalidade||'—'}</td>
+                      <td style={{padding:'8px 14px',textAlign:'right',fontSize:12,color:r.mensalidade?'#34d399':'rgba(255,255,255,0.2)'}}>{r.mensalidade||'—'}</td>
                       <td style={{padding:'8px 14px'}}>
                         <span style={{background:(r.status||'').toLowerCase().includes('ativo')?'rgba(52,211,153,0.15)':'rgba(255,255,255,0.06)',color:(r.status||'').toLowerCase().includes('ativo')?'#6ee7b7':'rgba(255,255,255,0.35)',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:600}}>
                           {r.status||'—'}
@@ -4483,16 +4550,25 @@ function BaseAtivaTab({supabaseClient}) {
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.area||'—'}</td>
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.5)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cidade}>{r.cidade||'—'}</td>
                       <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.bairro}>{r.bairro||'—'}</td>
+                      <td style={{padding:'8px 14px',textAlign:'right',fontWeight:desl>0?700:400,color:desl>0?'#f472b6':'rgba(255,255,255,0.2)'}}>{desl||'—'}</td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>
             <div className="pgn">
-              <span className="pgn-info">{start+1}–{Math.min(start+PS,total)} de {total}</span>
-              <button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>&#8592;</button>
-              <button className="pgn-btn" disabled={start+PS>=total} onClick={()=>setPage(p=>p+1)}>&#8594;</button>
+              <span className="pgn-info">{start+1}–{Math.min(start+PS,total)} de {total} clientes</span>
+              <button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>←</button>
+              <button className="pgn-btn" disabled={start+PS>=total} onClick={()=>setPage(p=>p+1)}>→</button>
             </div>
+          </div>
+
+          {/* Rodapé com totais */}
+          <div style={{marginTop:10,padding:'10px 16px',borderRadius:10,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',fontSize:12,color:'rgba(255,255,255,0.35)',display:'flex',gap:20,flexWrap:'wrap'}}>
+            <span>Total: <strong style={{color:'#06b6d4'}}>{baseRows.length.toLocaleString('pt-BR')}</strong></span>
+            <span>Portaria: <strong style={{color:'#a78bfa'}}>{portariaCount}</strong></span>
+            <span>Com deslocamento: <strong style={{color:'#f472b6'}}>{comDesl}</strong></span>
+            <span>Sem deslocamento: <strong style={{color:'rgba(255,255,255,0.4)'}}>{baseRows.length - comDesl}</strong></span>
           </div>
         </React.Fragment>
       )}
@@ -4500,9 +4576,6 @@ function BaseAtivaTab({supabaseClient}) {
   );
 }
 
-// ════════════════════════════════════════════════════
-//  MODAL CLIENTE — tratativas + deslocamentos + base ativa
-// ════════════════════════════════════════════════════
 function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, onClose}) {
   const [obs,    setObs]    = React.useState('');
   const [notas,  setNotas]  = React.useState([]);
@@ -6368,7 +6441,7 @@ function App() {
         </div>
       )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
-      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} />}
+      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} dispatches={dispatches} clients={clients} />}
       {aba==="analise"&&<AnaliseBases supabaseClient={supabaseClient} dispatches={dispatches} />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
