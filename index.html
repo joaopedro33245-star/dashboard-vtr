@@ -3371,12 +3371,24 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
   const piClienteKeys=useMemo(()=>{
     const s=new Set();
     // 1. Pelo nome do cliente
+    let porNome=0;
     for(const c of clients)
-      if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE"))
+      if((c.nome_cliente||"").toUpperCase().includes("PORTARIA INTELIGENTE")){
         s.add(`${c.codigo_cliente}||${c.filial}`);
+        porNome++;
+      }
     // 2. Pelo código+filial que aparece em deslocamentos PI
-    for(const d of dispatches.filter(x=>x.portaria_inteligente))
-      s.add(`${d.codigo_cliente}||${d.filial}`);
+    const dispPI=dispatches.filter(x=>x.portaria_inteligente);
+    for(const d of dispPI) s.add(`${d.codigo_cliente}||${d.filial}`);
+    console.log('[piClienteKeys] dispPI:',dispPI.length,'| porNome:',porNome,'| total keys:',s.size);
+    // 3. Verificar cruzamento com clients
+    let clientesPI=clients.filter(c=>s.has(`${c.codigo_cliente}||${c.filial}`));
+    console.log('[piClienteKeys] clients que cruzam:',clientesPI.length);
+    if(clientesPI.length===0&&dispPI.length>0){
+      // Debug: mostrar amostra de chaves
+      const dKey=[...s][0]; const cKey=clients.length>0?`${clients[0].codigo_cliente}||${clients[0].filial}`:'';
+      console.log('[piClienteKeys] Exemplo dispatch key:',dKey,'| Exemplo client key:',cKey);
+    }
     return s;
   },[dispatches,clients]);
 
@@ -5945,29 +5957,37 @@ function App() {
   },[usuario]);
 
   async function fetchAll(table,order,ascending=true){
-    // 1. Contar total real na tabela
+    // 1. Contar total real
     const{count,error:cErr}=await supabaseClient.from(table).select('*',{count:'exact',head:true});
-    if(cErr) throw new Error(`Erro ao contar ${table}: ${cErr.message}`);
+    if(cErr) throw new Error('Erro ao contar '+table+': '+cErr.message);
     const total=count||0;
     if(total===0) return [];
-    console.log(`[fetchAll] ${table}: ${total} registros`);
+    console.log('[fetchAll] '+table+': '+total+' registros');
 
-    // 2. Buscar em páginas de 1000 — sem limite artificial
+    // 2. Buscar em páginas paralelas de 1000 (mais rápido)
     const PAGE=1000;
-    let all=[],from=0;
-    while(from<total){
-      let q=supabaseClient.from(table).select('*').order(order,{ascending}).range(from,Math.min(from+PAGE-1,total-1));
-      const{data,error}=await q;
-      if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
-      if(!data||data.length===0) break;
-      all=all.concat(data);
-      console.log(`[fetchAll] ${table}: ${all.length}/${total}`);
-      if(data.length<PAGE) break;
-      from+=PAGE;
-      // Pausa entre páginas para não sobrecarregar
-      if(from<total) await new Promise(r=>setTimeout(r,50));
+    const numPages=Math.ceil(total/PAGE);
+    // Paralelo em grupos de 5 para não sobrecarregar
+    const GROUP=5;
+    let all=[];
+    for(let g=0;g<numPages;g+=GROUP){
+      const batch=[];
+      for(let p=g;p<Math.min(g+GROUP,numPages);p++){
+        const from=p*PAGE;
+        const to=Math.min(from+PAGE-1,total-1);
+        batch.push(
+          supabaseClient.from(table).select('*').order(order,{ascending}).range(from,to)
+        );
+      }
+      const results=await Promise.all(batch);
+      for(const{data,error} of results){
+        if(error) throw new Error('Erro ao carregar '+table+': '+error.message);
+        if(data&&data.length) all=all.concat(data);
+      }
+      console.log('[fetchAll] '+table+': '+all.length+'/'+total);
+      if(g+GROUP<numPages) await new Promise(r=>setTimeout(r,100));
     }
-    console.log(`[fetchAll] ${table}: concluído — ${all.length} registros`);
+    console.log('[fetchAll] '+table+' concluído: '+all.length+' registros');
     return all;
   }
 
@@ -5985,7 +6005,22 @@ function App() {
   }
 
   function salvarCache(cls,dis){
-    try{localStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),cls,dis}));}catch{}
+    try{
+      const payload=JSON.stringify({ts:Date.now(),cls,dis});
+      // localStorage tem limite ~5MB — só salva se couber
+      if(payload.length < 4*1024*1024){
+        localStorage.setItem(CACHE_KEY,payload);
+        console.log('[Cache] Salvo: '+(payload.length/1024).toFixed(0)+'KB');
+      } else {
+        // Volume grande: salva só clientes (dispatches buscamos sempre do Supabase)
+        const payloadMin=JSON.stringify({ts:Date.now(),cls,dis:[]});
+        localStorage.setItem(CACHE_KEY,payloadMin);
+        console.log('[Cache] Volume grande ('+( payload.length/1024).toFixed(0)+'KB) — cache só de clientes');
+      }
+    }catch(e){
+      console.warn('[Cache] Erro ao salvar:',e.message);
+      try{localStorage.removeItem(CACHE_KEY);}catch{}
+    }
   }
   function lerCache(){
     try{
