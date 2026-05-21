@@ -4313,17 +4313,19 @@ function BaseAtivaTab({supabaseClient, dispatches, clients}) {
     return map;
   }, [clients]);
 
-  // Função para buscar deslocamentos de um cliente da base ativa
+  // Mapa simplificado só por conta (para lookup rápido)
+  const dispMapConta = React.useMemo(()=>{
+    const map = {};
+    Object.entries(dispMap).forEach(([key, count]) => {
+      const conta = key.split('||')[0];
+      map[conta] = (map[conta]||0) + count;
+    });
+    return map;
+  }, [dispMap]);
+
   const getDeslocamentos = (row) => {
     const conta = (row.conta||'').toLowerCase().trim();
-    const emp   = (row.empresa||'').toLowerCase().trim();
-    // Tenta direto por conta+empresa
-    let total = 0;
-    Object.entries(dispMap).forEach(([key, count]) => {
-      const [dc] = key.split('||');
-      if(dc === conta) total += count;
-    });
-    return total;
+    return dispMapConta[conta] || 0;
   };
 
   const isPortaria = (row) => (row.cliente||'').toUpperCase().includes('PORTARIA');
@@ -5964,6 +5966,7 @@ END $$;`;
   );
 }
 
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -6155,7 +6158,23 @@ function App() {
       const dis=await fetchAll("dispatches","data_hora",false);
       setLoadingMsg("Processando dados…");
       salvarCache(cls,dis);
-      const clsNorm=(cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
+      // Enriquecer clients com dados da Base Ativa quando nome está vazio
+      let baseAtiva=[];
+      try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
+      const baseMap={};
+      baseAtiva.forEach(b=>{baseMap[(b.conta||'').trim().toLowerCase()]=b;});
+      const clsNorm=(cls||[]).map(c=>{
+        const norm={...c,filial_original:c.filial,filial:limparEmpresa(c.filial)};
+        const ba=baseMap[(c.codigo_cliente||'').trim().toLowerCase()];
+        if(ba){
+          if(!norm.nome_cliente||norm.nome_cliente===norm.codigo_cliente) norm.nome_cliente=ba.cliente;
+          if(!norm.cidade) norm.cidade=ba.cidade;
+          if(!norm.bairro) norm.bairro=ba.bairro;
+          if(!norm.area)   norm.area=ba.area;
+          if(!norm.mensalidade) norm.mensalidade=ba.mensalidade;
+        }
+        return norm;
+      });
       const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
       setClients(clsNorm);setDispatches(disNorm);
     }catch(e){
