@@ -5,7 +5,6 @@
 
 
 
-
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -3172,7 +3171,63 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
   }
 
   function confirmClients(){onImportClients(clientPreview);setClientPreview(null);setClientFileName("");if(clientRef.current)clientRef.current.value="";}
-  function confirmDispatches(){onImportDispatches(dispatchPreview.rows);setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}
+  const [limparMesSel, setLimparMesSel] = React.useState("");
+  const [limpando, setLimpando] = React.useState(false);
+  const [msgLimpeza, setMsgLimpeza] = React.useState("");
+
+  // Meses disponíveis no banco (extraídos dos dispatches)
+  const mesesNoBanco = React.useMemo(() => {
+    const set = new Set();
+    dispatches.forEach(d => {
+      if(!d.data_hora) return;
+      try {
+        const partes = d.data_hora.split(", ")[0].split("/");
+        if(partes.length >= 3) set.add(`${partes[2]}-${partes[1].padStart(2,"0")}`);
+      } catch {}
+    });
+    return Array.from(set).sort().reverse();
+  }, [dispatches]);
+
+  async function limparMes() {
+    if(!limparMesSel) return;
+    const [ano, mes] = limparMesSel.split("-");
+    const confirmMsg = `Tem certeza que deseja apagar TODOS os deslocamentos de ${monthLabel(limparMesSel)}? Esta ação não pode ser desfeita.`;
+    if(!window.confirm(confirmMsg)) return;
+    setLimpando(true); setMsgLimpeza("");
+    try {
+      // Busca IDs do mês selecionado
+      const idsParaDeletar = dispatches
+        .filter(d => {
+          if(!d.data_hora) return false;
+          try {
+            const partes = d.data_hora.split(", ")[0].split("/");
+            const mk = `${partes[2]}-${partes[1].padStart(2,"0")}`;
+            return mk === limparMesSel;
+          } catch { return false; }
+        })
+        .map(d => d.id)
+        .filter(Boolean);
+      if(idsParaDeletar.length === 0){ setMsgLimpeza("❌ Nenhum registro encontrado para esse mês."); setLimpando(false); return; }
+      // Deleta em lotes de 500
+      for(let i = 0; i < idsParaDeletar.length; i += 500) {
+        const lote = idsParaDeletar.slice(i, i+500);
+        const { error } = await supabaseClient.from("dispatches").delete().in("id", lote);
+        if(error) throw new Error(error.message);
+      }
+      setMsgLimpeza(`✅ ${idsParaDeletar.length} registros de ${monthLabel(limparMesSel)} removidos com sucesso!`);
+      setLimparMesSel("");
+      try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+      if(typeof onRefresh === "function") onRefresh();
+    } catch(e) {
+      setMsgLimpeza("❌ Erro: " + e.message);
+    }
+    setLimpando(false);
+  }
+
+  function confirmDispatches(){
+    onImportDispatches(dispatchPreview.rows);
+    setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";
+  }
   const card={borderRadius:16,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",padding:24,marginBottom:20};
 
   return(
@@ -3194,6 +3249,39 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         ))}
       </div>
+      {/* Painel de limpeza por mês */}
+      {dispatches.length > 0 && (
+        <div style={{ borderRadius:16,border:"1px solid rgba(239,68,68,0.2)",background:"rgba(239,68,68,0.04)",padding:20,marginBottom:20 }}>
+          <SectionLabel>🗑️ Limpar Deslocamentos por Mês</SectionLabel>
+          <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14 }}>
+            Remove todos os deslocamentos de um mês específico do banco — útil antes de reimportar um período corrigido.
+          </div>
+          <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
+            <select
+              value={limparMesSel}
+              onChange={e => setLimparMesSel(e.target.value)}
+              style={{ flex:1,minWidth:180,padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none" }}
+            >
+              <option value="">— Selecione o mês —</option>
+              {mesesNoBanco.map(mk => (
+                <option key={mk} value={mk}>{monthLabel(mk)}</option>
+              ))}
+            </select>
+            <button
+              onClick={limparMes}
+              disabled={!limparMesSel || limpando}
+              style={{ padding:"10px 20px",borderRadius:10,border:"none",background:limparMesSel?"#ef4444":"rgba(239,68,68,0.2)",color:limparMesSel?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:13,cursor:limparMesSel?"pointer":"not-allowed",whiteSpace:"nowrap",opacity:limpando?0.6:1 }}
+            >
+              {limpando ? "Removendo…" : "🗑️ Limpar mês selecionado"}
+            </button>
+          </div>
+          {msgLimpeza && (
+            <div style={{ marginTop:10,padding:"8px 14px",borderRadius:9,background:msgLimpeza.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(239,68,68,0.1)",border:msgLimpeza.startsWith("✅")?"1px solid rgba(52,211,153,0.3)":"1px solid rgba(239,68,68,0.3)",color:msgLimpeza.startsWith("✅")?"#34d399":"#f87171",fontSize:12,fontWeight:600 }}>
+              {msgLimpeza}
+            </div>
+          )}
+        </div>
+      )}
       <div style={card}>
         <SectionLabel>📋 Importar Clientes</SectionLabel>
         <div style={{ borderRadius:10,border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.03)",padding:"12px 16px",marginBottom:16 }}>
@@ -3257,7 +3345,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
             <div style={{ marginBottom:12,display:"flex",flexWrap:"wrap",gap:6 }}>
               {Object.entries(dispatchPreview.mesesNoArquivo||{}).map(([mk,qt])=>{const jaImportado=dispatchPreview.mesesJaImportados?.[mk];return(<div key={mk} style={{ display:"flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:700,border:jaImportado?"1px solid rgba(251,146,60,0.5)":"1px solid rgba(52,211,153,0.4)",background:jaImportado?"rgba(251,146,60,0.1)":"rgba(52,211,153,0.08)",color:jaImportado?"#fb923c":"#34d399" }}>{jaImportado?"⚠️":"🆕"} {monthLabel(mk)} <span style={{ opacity:0.7 }}>({qt} registros)</span>{jaImportado&&<span style={{ fontSize:10,opacity:0.8 }}>— já importado!</span>}</div>);})}
             </div>
-            {Object.keys(dispatchPreview.mesesJaImportados||{}).length>0&&<div style={{ marginBottom:12,padding:"10px 14px",borderRadius:10,background:"rgba(251,146,60,0.1)",border:"1px solid rgba(251,146,60,0.35)",color:"#fb923c",fontSize:12,lineHeight:1.6 }}>⚠️ <strong>Atenção:</strong> {Object.keys(dispatchPreview.mesesJaImportados).map(mk=>monthLabel(mk)).join(", ")} já {Object.keys(dispatchPreview.mesesJaImportados).length===1?"foi importado":"foram importados"} anteriormente. Importar novamente vai <strong>duplicar</strong> os registros desse período.</div>}
+            {Object.keys(dispatchPreview.mesesJaImportados||{}).length>0&&<div style={{ marginBottom:12,padding:"10px 14px",borderRadius:10,background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.25)",color:"#38bdf8",fontSize:12,lineHeight:1.6 }}>ℹ️ {Object.keys(dispatchPreview.mesesJaImportados).map(mk=>monthLabel(mk)).join(", ")} já {Object.keys(dispatchPreview.mesesJaImportados).length===1?"possui":"possuem"} registros no banco. <strong>Registros já existentes serão ignorados automaticamente</strong> — apenas os novos serão adicionados.</div>}
             <div style={{ overflowX:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.07)" }}>
               <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
                 <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>{["Código","Filial","Data","Evento","Portaria?"].map(h=><th key={h} style={{ padding:"8px 12px",textAlign:"left",color:"rgba(255,255,255,0.3)",fontSize:10,textTransform:"uppercase" }}>{h}</th>)}</tr></thead>
@@ -3265,7 +3353,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
               </table>
             </div>
             <div style={{ display:"flex",gap:10,marginTop:14 }}>
-              <button onClick={confirmDispatches} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:Object.keys(dispatchPreview.mesesJaImportados||{}).length>0?"#fb923c":"#818cf8",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>{Object.keys(dispatchPreview.mesesJaImportados||{}).length>0?"⚠️ Importar mesmo assim":"✅ Adicionar"} — {dispatchPreview.rows.length} registros ao banco</button>
+              <button onClick={confirmDispatches} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:"#818cf8",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>✅ Adicionar — {dispatchPreview.rows.length} registros ao banco</button>
               <button onClick={()=>{setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}} style={{ padding:"10px 16px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer" }}>Cancelar</button>
             </div>
           </div>
@@ -4020,1953 +4108,6 @@ class ErrorBoundary extends React.Component {
 }
 
 
-// ════════════════════════════════════════════════════
-//  CAMADA SUPABASE — salva/carrega tudo em nuvem
-//  com fallback automático para localStorage
-// ════════════════════════════════════════════════════
-
-// Helpers de normalização
-const sbReady = () => window._supabaseReady === true;
-
-// ── BASE ATIVA ──────────────────────────────────────
-async function sbSalvarBaseAtiva(sb, rows) {
-  if(!sbReady() || !sb) return {ok: false, salvos: 0};
-
-  // Desduplicar — pega o último de cada par conta+empresa
-  const seen = new Map();
-  for(const r of rows) {
-    const key = (r.conta||'').trim().toLowerCase()+'||'+(r.empresa||'').trim().toLowerCase();
-    seen.set(key, r);
-  }
-  const unique = Array.from(seen.values());
-  console.log('[sbSalvar] Original:', rows.length, '| Unicos:', unique.length);
-
-  // Limpar tabela e reinserir do zero — evita qualquer conflito
-  const {error: delErr} = await sb
-    .from('analise_base_ativa')
-    .delete()
-    .neq('id', '00000000-0000-0000-0000-000000000000');
-  if(delErr) console.warn('[sbSalvar] Erro ao limpar:', delErr.message);
-
-  const BATCH = 200;
-  let salvos = 0, erros = 0;
-
-  for(let i = 0; i < unique.length; i += BATCH) {
-    const lote = unique.slice(i, i + BATCH).map(r => ({
-      empresa:     (r.empresa     || '').trim(),
-      conta:       (r.conta       || '').trim(),
-      cliente:     (r.cliente     || '').trim(),
-      mensalidade: (r.mensalidade || '').trim(),
-      status:      (r.status      || 'Ativo').trim(),
-      area:        (r.area        || '').trim(),
-      cidade:      (r.cidade      || '').trim(),
-      bairro:      (r.bairro      || '').trim(),
-    }));
-
-    // INSERT simples — sem upsert, sem conflito
-    const {error} = await sb.from('analise_base_ativa').insert(lote);
-
-    if(error) {
-      console.warn('[sbSalvar] Erro lote', i, ':', error.message);
-      erros += lote.length;
-    } else {
-      salvos += lote.length;
-    }
-    console.log('[sbSalvar] Progresso:', salvos + erros, '/', unique.length);
-    if(i + BATCH < unique.length) await new Promise(r => setTimeout(r, 80));
-  }
-
-  console.log('[sbSalvar] Concluido — salvos:', salvos, '| erros:', erros);
-  return {ok: erros === 0, salvos, erros};
-}
-
-async function sbCarregarBaseAtiva(sb) {
-  if(!sbReady() || !sb) return null;
-  try {
-    // 1. Contar total real
-    const {count, error: cErr} = await sb
-      .from('analise_base_ativa')
-      .select('*', {count:'exact', head:true});
-    if(cErr) throw cErr;
-    const total = count || 0;
-    console.log('[BaseAtiva] Total no Supabase:', total);
-    if(total === 0) return [];
-
-    // 2. Busca sequencial em páginas de 1000 — evita rate limit
-    const PAGE = 1000;
-    let all = [];
-    for(let from = 0; from < total; from += PAGE) {
-      const to = Math.min(from + PAGE - 1, total - 1);
-      const {data, error} = await sb
-        .from('analise_base_ativa')
-        .select('id,empresa,conta,cliente,mensalidade,status,area,cidade,bairro')
-        .order('id', {ascending: true})
-        .range(from, to);
-      if(error) throw error;
-      if(data && data.length > 0) {
-        all = all.concat(data);
-        console.log('[BaseAtiva] Progresso:', all.length, '/', total);
-      }
-      // Pequena pausa para não sobrecarregar
-      if(from + PAGE < total) {
-        await new Promise(r => setTimeout(r, 80));
-      }
-    }
-    console.log('[BaseAtiva] Carregamento concluído:', all.length);
-    return all;
-  } catch(e) {
-    console.warn('sbCarregarBaseAtiva:', e.message);
-    return null;
-  }
-}
-
-async function sbLimparBaseAtiva(sb) {
-  if(!sbReady() || !sb) return false;
-  try {
-    const {error} = await sb.from('analise_base_ativa').delete().neq('id','00000000-0000-0000-0000-000000000000');
-    if(error) throw error;
-    return true;
-  } catch(e) { console.warn('sbLimparBaseAtiva:', e.message); return false; }
-}
-
-// ── SEMANAS ─────────────────────────────────────────
-async function sbSalvarSemana(sb, label, rows) {
-  if(!sbReady() || !sb) return false;
-  try {
-    // Deduplicar por conta+empresa
-    const seen = new Map();
-    for(const r of rows) {
-      const key = (r.conta||'').trim().toLowerCase()+'||'+(r.empresa||'').trim().toLowerCase();
-      seen.set(key, r);
-    }
-    const unique = Array.from(seen.values());
-    console.log('[sbSemana] Salvando', label, '— únicos:', unique.length);
-
-    // 1. Garante registro da semana
-    await sb.from('analise_semanas')
-      .upsert({label}, {onConflict:'label', ignoreDuplicates:true});
-
-    // 2. Remove clientes antigos desta semana
-    await sb.from('analise_semana_clientes').delete().eq('semana_label', label);
-
-    // 3. Insere em lotes de 100 com pausa
-    const BATCH = 100;
-    let salvos = 0;
-    for(let i=0; i<unique.length; i+=BATCH) {
-      const lote = unique.slice(i, i+BATCH).map(r=>({
-        semana_label: label,
-        empresa: (r.empresa||'').trim(),
-        conta:   (r.conta  ||'').trim(),
-        cliente: (r.cliente||'').trim(),
-        eventos: parseInt(r.eventos) || 0
-      }));
-      const {error} = await sb.from('analise_semana_clientes').insert(lote);
-      if(error) { console.warn('[sbSemana] Erro lote', i, error.message); }
-      else salvos += lote.length;
-      if(i + BATCH < unique.length) await new Promise(r=>setTimeout(r,80));
-    }
-    console.log('[sbSemana] Salvos:', salvos, '/', unique.length);
-    return true;
-  } catch(e) { console.warn('sbSalvarSemana:', e.message); return false; }
-}
-
-async function sbCarregarSemanas(sb) {
-  if(!sbReady() || !sb) return null;
-  try {
-    // Busca semanas
-    const {data: semanas, error: e1} = await sb.from('analise_semanas')
-      .select('label').order('importado_em', {ascending:true});
-    if(e1) throw e1;
-    if(!semanas || !semanas.length) return [];
-    console.log('[sbSemanas] Semanas encontradas:', semanas.map(s=>s.label));
-
-    // Contar total de clientes
-    const {count, error: cErr} = await sb.from('analise_semana_clientes')
-      .select('*', {count:'exact', head:true});
-    if(cErr) throw cErr;
-    const total = count || 0;
-    console.log('[sbSemanas] Total clientes:', total);
-
-    // Buscar todos em páginas
-    const PAGE = 1000;
-    let clientes = [];
-    for(let from=0; from<total; from+=PAGE) {
-      const {data: lote, error: e2} = await sb.from('analise_semana_clientes')
-        .select('semana_label,empresa,conta,cliente,eventos')
-        .range(from, Math.min(from+PAGE-1, total-1));
-      if(e2) throw e2;
-      if(lote) clientes = clientes.concat(lote);
-      if(from+PAGE < total) await new Promise(r=>setTimeout(r,80));
-    }
-    console.log('[sbSemanas] Clientes carregados:', clientes.length);
-
-    // Agrupar por semana
-    return semanas.map(s => ({
-      label: s.label,
-      rows: clientes
-        .filter(c => c.semana_label === s.label)
-        .map(c => ({
-          empresa: c.empresa, conta: c.conta,
-          cliente: c.cliente, eventos: parseInt(c.eventos)||0
-        }))
-    }));
-  } catch(e) { console.warn('sbCarregarSemanas:', e.message); return null; }
-}
-
-async function sbLimparSemanas(sb) {
-  if(!sbReady() || !sb) return false;
-  try {
-    await sb.from('analise_semana_clientes').delete().neq('id','00000000-0000-0000-0000-000000000000');
-    await sb.from('analise_semanas').delete().neq('id','00000000-0000-0000-0000-000000000000');
-    return true;
-  } catch(e) { console.warn('sbLimparSemanas:', e.message); return false; }
-}
-
-// ── TRATATIVAS ──────────────────────────────────────
-async function sbSalvarTratativa(sb, nota) {
-  if(!sbReady() || !sb) return false;
-  try {
-    const {error} = await sb.from('analise_tratativas').insert([nota]);
-    if(error) throw error;
-    return true;
-  } catch(e) { console.warn('sbSalvarTratativa:', e.message); return false; }
-}
-
-async function sbCarregarTratativas(sb, conta, empresa) {
-  if(!sbReady() || !sb) return null;
-  try {
-    const {data, error} = await sb.from('analise_tratativas')
-      .select('*').eq('conta', conta).eq('empresa', empresa)
-      .order('criado_em', {ascending:false});
-    if(error) throw error;
-    return data || [];
-  } catch(e) { console.warn('sbCarregarTratativas:', e.message); return null; }
-}
-
-
-function BaseAtivaTab({supabaseClient, dispatches, clients}) {
-  const [baseRows, setBaseRows] = React.useState(()=>{
-    try{ return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{return [];}
-  });
-  const [search,    setSearch]    = React.useState('');
-  const [page,      setPage]      = React.useState(0);
-  const [msg,       setMsg]       = React.useState('');
-  const [filialFil, setFilialFil] = React.useState('Todas');
-  const [cidadeFil, setCidadeFil] = React.useState('Todas');
-  const [tipoFil,   setTipoFil]   = React.useState('Todos'); // Todos | Portaria | Normal
-  const [sbStatus,  setSbStatus]  = React.useState('');
-  const [editando,  setEditando]  = React.useState(null); // cliente sendo editado
-  const PS = 20;
-
-  // Carregar do Supabase ao montar
-  React.useEffect(()=>{
-    (async()=>{
-      setSbStatus('loading');
-      const dados = await sbCarregarBaseAtiva(supabaseClient);
-      if(dados && dados.length > 0) {
-        setBaseRows(dados);
-        try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(dados)); }catch{}
-        setSbStatus('loaded:'+dados.length);
-        setTimeout(()=>setSbStatus(''), 4000);
-      } else {
-        setSbStatus('');
-      }
-    })();
-  }, [supabaseClient]);
-
-  const saveBase = async (rows) => {
-    setBaseRows(rows);
-    try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(rows)); }catch{}
-    if(rows.length > 0) {
-      setSbStatus('saving');
-      const result = await sbSalvarBaseAtiva(supabaseClient, rows);
-      const salvos = result?.salvos ?? (result === true ? rows.length : 0);
-      const erros  = result?.erros  ?? 0;
-      if(salvos === rows.length) setSbStatus('ok:'+salvos);
-      else if(salvos > 0) setSbStatus('parcial:'+salvos+'/'+rows.length+' salvos ('+erros+' erros)');
-      else setSbStatus('local');
-      setTimeout(()=>setSbStatus(''), 6000);
-    } else {
-      await sbLimparBaseAtiva(supabaseClient);
-      setSbStatus('');
-    }
-  };
-
-  // Mapa de deslocamentos por conta+filial
-  const dispMap = React.useMemo(()=>{
-    const map = {};
-    (dispatches||[]).forEach(d=>{
-      const key = (d.codigo_cliente||'').toLowerCase().trim()+'||'+(d.filial||'').toLowerCase().trim();
-      map[key] = (map[key]||0) + 1;
-    });
-    return map;
-  }, [dispatches]);
-
-  // Cruzar base ativa com clients do Supabase para pegar codigo_cliente
-  const codigoMap = React.useMemo(()=>{
-    const map = {};
-    (clients||[]).forEach(c=>{
-      const key = (c.nome_cliente||'').toLowerCase().trim();
-      const conta = (c.codigo_cliente||'').toLowerCase().trim();
-      if(conta) map[conta] = c;
-    });
-    return map;
-  }, [clients]);
-
-  // Mapa simplificado só por conta (para lookup rápido)
-  const dispMapConta = React.useMemo(()=>{
-    const map = {};
-    Object.entries(dispMap).forEach(([key, count]) => {
-      const conta = key.split('||')[0];
-      map[conta] = (map[conta]||0) + count;
-    });
-    return map;
-  }, [dispMap]);
-
-  const getDeslocamentos = (row) => {
-    const conta = (row.conta||'').toLowerCase().trim();
-    return dispMapConta[conta] || 0;
-  };
-
-  const isPortaria = (row) => (row.cliente||'').toUpperCase().includes('PORTARIA');
-
-  const handleImport = (e) => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const wb = XLSX.read(ev.target.result, {type:'array'});
-        const rows = [];
-        wb.SheetNames.forEach(name => {
-          const ws = wb.Sheets[name];
-          const data = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-          let sr = 0;
-          let colMap = {empresa:0,conta:1,cliente:2,mensalidade:3,status:4,area:5,cidade:-1,bairro:-1};
-          for(let i=0; i<Math.min(5,data.length); i++) {
-            const v = data[i].map((x,idx)=>({val:String(x||'').toLowerCase(),idx}));
-            const hasHeader = v.some(x=>x.val.includes('empresa')||x.val.includes('conta')||x.val.includes('cliente')||x.val.includes('fantasia'));
-            if(hasHeader){
-              sr = i+1;
-              v.forEach(({val,idx})=>{
-                if(val.includes('empresa')) colMap.empresa=idx;
-                else if(val.includes('conta')) colMap.conta=idx;
-                else if(val.includes('cliente')||val.includes('fantasia')) colMap.cliente=idx;
-                else if(val.includes('mensalidade')||val.includes('mensal')) colMap.mensalidade=idx;
-                else if(val.includes('status')) colMap.status=idx;
-                else if(val.includes('área')||val==='area') colMap.area=idx;
-                else if(val.includes('cidade')||val.includes('city')) colMap.cidade=idx;
-                else if(val.includes('bairro')||val.includes('distrito')) colMap.bairro=idx;
-              });
-              break;
-            }
-          }
-          for(let i=sr; i<data.length; i++) {
-            const r = data[i];
-            const emp    = String(r[colMap.empresa]||'').trim();
-            const cont   = String(r[colMap.conta]||'').trim();
-            const cli    = String(r[colMap.cliente]||'').trim();
-            const mens   = String(r[colMap.mensalidade]||'').trim();
-            const stat   = String(r[colMap.status]||'Ativo').trim();
-            const area   = String(r[colMap.area]||'').trim();
-            const cidade = colMap.cidade>=0 ? String(r[colMap.cidade]||'').trim() : '';
-            const bairro = colMap.bairro>=0 ? String(r[colMap.bairro]||'').trim() : '';
-            if(emp&&cont&&cli) rows.push({empresa:emp,conta:cont,cliente:cli,mensalidade:mens,status:stat,area,cidade,bairro});
-          }
-        });
-        if(!rows.length){setMsg('err:Nenhum dado encontrado');return;}
-        saveBase(rows);
-        setMsg('ok:'+rows.length+' clientes importados com sucesso!');
-        setPage(0); setSearch('');
-        setTimeout(()=>setMsg(''),4000);
-      } catch(err){setMsg('err:'+err.message);}
-    };
-    reader.readAsArrayBuffer(file);
-    e.target.value='';
-  };
-
-  // Filtros
-  const filiais  = ['Todas', ...[...new Set(baseRows.map(r=>r.empresa).filter(Boolean))].sort()];
-  const cidades  = ['Todas', ...[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].sort()];
-
-  const filtered = baseRows.filter(r => {
-    if(filialFil !== 'Todas' && r.empresa !== filialFil) return false;
-    if(cidadeFil !== 'Todas' && r.cidade !== cidadeFil) return false;
-    if(tipoFil === 'Portaria' && !isPortaria(r)) return false;
-    if(tipoFil === 'Normal'   &&  isPortaria(r)) return false;
-    if(search){
-      const q=search.toLowerCase();
-      if(!r.cliente.toLowerCase().includes(q)&&!r.conta.toLowerCase().includes(q)&&!(r.empresa||'').toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
-
-  const total=filtered.length, start=page*PS, pageRows=filtered.slice(start,start+PS);
-  const portariaCount = baseRows.filter(isPortaria).length;
-  const comDesl = baseRows.filter(r=>getDeslocamentos(r)>0).length;
-
-  const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
-  const isOk  = msg.startsWith('ok:');
-  const isErr = msg.startsWith('err:');
-  const msgText = msg.replace(/^(ok|err):/,'');
-
-  // Salvar edição
-  const salvarEdicao = async (rowAtualizado) => {
-    const novaBase = baseRows.map(r =>
-      r.conta === rowAtualizado.conta && r.empresa === rowAtualizado.empresa ? rowAtualizado : r
-    );
-    await saveBase(novaBase);
-    setEditando(null);
-  };
-
-  return (
-    <div style={{animation:'fadeUp 0.3s ease'}}>
-
-      {/* Modal de edição */}
-      {editando && (
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}
-          onClick={e=>e.target===e.currentTarget&&setEditando(null)}>
-          <div style={{background:'#0d1424',border:'1px solid rgba(255,255,255,0.1)',borderRadius:20,width:'100%',maxWidth:560,padding:28}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
-              <div style={{fontSize:16,fontWeight:700,color:'#fff'}}>✏️ Editar cliente</div>
-              <button onClick={()=>setEditando(null)} style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
-              {[
-                ['Cliente','cliente','text'],
-                ['Empresa','empresa','text'],
-                ['Mensalidade','mensalidade','text'],
-                ['Status','status','text'],
-                ['Área','area','text'],
-                ['Cidade','cidade','text'],
-                ['Bairro','bairro','text'],
-              ].map(([label,field])=>(
-                <div key={field}>
-                  <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>{label}</div>
-                  <input
-                    value={editando[field]||''}
-                    onChange={e=>setEditando({...editando,[field]:e.target.value})}
-                    style={{width:'100%',padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none',boxSizing:'border-box'}}
-                  />
-                </div>
-              ))}
-              <div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.4)',marginBottom:5,textTransform:'uppercase',letterSpacing:'.05em'}}>Conta</div>
-                <input value={editando.conta||''} disabled style={{width:'100%',padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.06)',background:'rgba(255,255,255,0.02)',color:'rgba(255,255,255,0.3)',fontSize:13,outline:'none',boxSizing:'border-box'}}/>
-              </div>
-            </div>
-            <div style={{display:'flex',gap:10}}>
-              <button onClick={()=>salvarEdicao(editando)}
-                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                💾 Salvar alterações
-              </button>
-              <button onClick={()=>setEditando(null)}
-                style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cabeçalho */}
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20,flexWrap:'wrap',gap:12}}>
-        <div>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:'#06b6d4',boxShadow:'0 0 8px #06b6d4'}}/>
-            <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>Base Ativa</span>
-          </div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>
-            Cadastro completo · deslocamentos cruzados automaticamente · portaria identificada pelo nome
-          </div>
-        </div>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-          <label style={{padding:'7px 16px',borderRadius:10,border:'1px solid rgba(6,182,212,0.5)',background:'rgba(6,182,212,0.1)',color:'#06b6d4',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:7}}>
-            📥 Importar base (.xlsx)
-            <input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleImport}/>
-          </label>
-          {baseRows.length>0&&<button onClick={()=>{if(window.confirm('Limpar toda a base ativa?'))saveBase([]);}}
-            style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.08)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-            🗑️ Limpar base
-          </button>}
-        </div>
-      </div>
-
-      {/* Status Supabase */}
-      {sbStatus&&<div style={{marginBottom:12,padding:'8px 14px',borderRadius:10,fontSize:12,display:'flex',alignItems:'center',gap:8,
-        background:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.06)':sbStatus==='loading'?'rgba(56,189,248,0.06)':'rgba(251,191,36,0.06)',
-        border:'1px solid '+(sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'rgba(52,211,153,0.2)':sbStatus==='loading'?'rgba(56,189,248,0.2)':'rgba(251,191,36,0.2)'),
-        color:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'#34d399':sbStatus==='loading'?'#38bdf8':'#fbbf24'}}>
-        <div style={{width:7,height:7,borderRadius:'50%',background:'currentColor',flexShrink:0}}/>
-        {sbStatus==='loading'?'Carregando clientes do Supabase...'
-          :sbStatus==='saving'?'Salvando no Supabase...'
-          :sbStatus.startsWith('loaded:')?'Carregados '+sbStatus.split(':')[1]+' clientes do Supabase ✓'
-          :sbStatus.startsWith('ok:')?'Salvo no Supabase: '+sbStatus.split(':')[1]+' clientes ✓'
-          :sbStatus.startsWith('parcial:')?'⚠️ Salvamento parcial: '+sbStatus.split(':')[1]
-          :sbStatus==='local'?'Supabase indisponível — salvo localmente'
-          :'Limpando...'}
-      </div>}
-
-      {msg&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,
-        background:isOk?'rgba(52,211,153,0.08)':isErr?'rgba(239,68,68,0.08)':'rgba(56,189,248,0.08)',
-        border:'1px solid '+(isOk?'rgba(52,211,153,0.2)':isErr?'rgba(239,68,68,0.2)':'rgba(56,189,248,0.2)'),
-        fontSize:13,color:isOk?'#34d399':isErr?'#f87171':'#38bdf8'}}>
-        {isOk?'✅ ':isErr?'❌ ':''}{msgText}
-      </div>}
-
-      {baseRows.length===0?(
-        <div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:16,padding:'56px 24px',textAlign:'center'}}>
-          <div style={{fontSize:44,marginBottom:14,opacity:.15}}>🗂️</div>
-          <div style={{fontSize:15,fontWeight:600,color:'rgba(255,255,255,0.3)',marginBottom:8}}>Nenhuma base importada</div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.18)',lineHeight:1.8}}>
-            Importe um .xlsx com as colunas:<br/>
-            <code style={{color:'rgba(6,182,212,0.7)',fontSize:11}}>Empresa · Conta · Cliente · Mensalidade · Status · Área · Cidade · Bairro</code><br/>
-            <span style={{fontSize:11,color:'rgba(255,255,255,0.15)'}}>As colunas são detectadas automaticamente pelo cabeçalho</span>
-          </div>
-        </div>
-      ):(
-        <React.Fragment>
-          {/* Cards de resumo */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:12,marginBottom:20}}>
-            {[
-              ['Total',baseRows.length,'#06b6d4'],
-              ['Ativos',baseRows.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],
-              ['Portaria',portariaCount,'#a78bfa'],
-              ['Com deslocamento',comDesl,'#f472b6'],
-              ['Cidades',[...new Set(baseRows.map(r=>r.cidade).filter(Boolean))].length,'#fbbf24'],
-            ].map(([l,v,c])=>(
-              <div key={l} style={{borderRadius:14,padding:'14px 18px',border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.03)'}}>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6,display:'flex',alignItems:'center',gap:6}}>
-                  <span style={{width:7,height:7,borderRadius:'50%',background:c,display:'block',flexShrink:0}}/>{l}
-                </div>
-                <div style={{fontSize:26,fontWeight:700,color:c,lineHeight:1}}>{v.toLocaleString('pt-BR')}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Filtros */}
-          <div style={{display:'flex',gap:8,marginBottom:12,flexWrap:'wrap'}}>
-            <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}
-              placeholder="🔍  Buscar cliente, conta ou empresa..."
-              style={{...inp,flex:1,minWidth:220}}/>
-            <select value={filialFil} onChange={e=>{setFilialFil(e.target.value);setPage(0);}} style={inp}>
-              {filiais.map(f=><option key={f} value={f}>{f==='Todas'?'Todas as filiais':f}</option>)}
-            </select>
-            {cidades.length>2&&<select value={cidadeFil} onChange={e=>{setCidadeFil(e.target.value);setPage(0);}} style={{...inp,borderColor:cidadeFil!=='Todas'?'rgba(251,191,36,0.5)':'rgba(255,255,255,0.1)',color:cidadeFil!=='Todas'?'#fbbf24':'#fff'}}>
-              {cidades.map(c=><option key={c} value={c}>{c==='Todas'?'🏙 Todas as cidades':'🏙 '+c}</option>)}
-            </select>}
-            <select value={tipoFil} onChange={e=>{setTipoFil(e.target.value);setPage(0);}} style={{...inp,borderColor:tipoFil!=='Todos'?'rgba(167,139,250,0.5)':'rgba(255,255,255,0.1)',color:tipoFil!=='Todos'?'#a78bfa':'#fff'}}>
-              <option value="Todos">🔀 Normal + Portaria</option>
-              <option value="Portaria">🏢 Somente Portaria Int.</option>
-              <option value="Normal">🚗 Somente Normal</option>
-            </select>
-          </div>
-
-          {/* Tabela */}
-          <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
-            <div className="table-scroll">
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
-                <colgroup>
-                  <col style={{width:90}}/><col/><col style={{width:120}}/>
-                  <col style={{width:95}}/><col style={{width:75}}/><col style={{width:85}}/>
-                  <col style={{width:95}}/><col style={{width:85}}/><col style={{width:80}}/>
-                </colgroup>
-                <thead>
-                  <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro','Deslocamentos',''].map(h=>(
-                      <th key={h} style={{padding:'10px 14px',textAlign:h==='Deslocamentos'||h==='Mensalidade'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageRows.map((r,i)=>{
-                    const desl = getDeslocamentos(r);
-                    const pi   = isPortaria(r);
-                    return(
-                    <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)'}}>
-                      <td style={{padding:'8px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{r.conta}</td>
-                      <td style={{padding:'8px 14px',color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>
-                        {r.cliente}
-                        {pi&&<span style={{marginLeft:6,background:'rgba(167,139,250,0.15)',color:'#a78bfa',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:600}}>PI</span>}
-                      </td>
-                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.35)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
-                      <td style={{padding:'8px 14px',textAlign:'right',fontSize:12,color:r.mensalidade?'#34d399':'rgba(255,255,255,0.2)'}}>{r.mensalidade||'—'}</td>
-                      <td style={{padding:'8px 14px'}}>
-                        <span style={{background:(r.status||'').toLowerCase().includes('ativo')?'rgba(52,211,153,0.15)':'rgba(255,255,255,0.06)',color:(r.status||'').toLowerCase().includes('ativo')?'#6ee7b7':'rgba(255,255,255,0.35)',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:600}}>
-                          {r.status||'—'}
-                        </span>
-                      </td>
-                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.area||'—'}</td>
-                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.5)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cidade}>{r.cidade||'—'}</td>
-                      <td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.bairro}>{r.bairro||'—'}</td>
-                      <td style={{padding:'8px 14px',textAlign:'right',fontWeight:desl>0?700:400,color:desl>0?'#f472b6':'rgba(255,255,255,0.2)'}}>{desl||'—'}</td>
-                      <td style={{padding:'8px 14px',textAlign:'center'}}>
-                        <button onClick={()=>setEditando({...r})}
-                          style={{background:'rgba(56,189,248,0.1)',border:'1px solid rgba(56,189,248,0.2)',color:'#38bdf8',borderRadius:6,padding:'3px 9px',cursor:'pointer',fontSize:11}}>
-                          ✏️
-                        </button>
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </table>
-            </div>
-            <div className="pgn">
-              <span className="pgn-info">{start+1}–{Math.min(start+PS,total)} de {total} clientes</span>
-              <button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>←</button>
-              <button className="pgn-btn" disabled={start+PS>=total} onClick={()=>setPage(p=>p+1)}>→</button>
-            </div>
-          </div>
-
-          {/* Rodapé com totais */}
-          <div style={{marginTop:10,padding:'10px 16px',borderRadius:10,background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',fontSize:12,color:'rgba(255,255,255,0.35)',display:'flex',gap:20,flexWrap:'wrap'}}>
-            <span>Total: <strong style={{color:'#06b6d4'}}>{baseRows.length.toLocaleString('pt-BR')}</strong></span>
-            <span>Portaria: <strong style={{color:'#a78bfa'}}>{portariaCount}</strong></span>
-            <span>Com deslocamento: <strong style={{color:'#f472b6'}}>{comDesl}</strong></span>
-            <span>Sem deslocamento: <strong style={{color:'rgba(255,255,255,0.4)'}}>{baseRows.length - comDesl}</strong></span>
-          </div>
-        </React.Fragment>
-      )}
-    </div>
-  );
-}
-
-function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, onClose}) {
-  const [obs,    setObs]    = React.useState('');
-  const [notas,  setNotas]  = React.useState([]);
-  const [saving, setSaving] = React.useState(false);
-  const [msg,    setMsg]    = React.useState('');
-  const [abaModal, setAbaModal] = React.useState('desl');
-  const sbReady = supabaseClient && window._supabaseReady;
-
-  // Dados da base ativa (conta + empresa como chave)
-  const baseAtiva = React.useMemo(()=>{
-    try{ return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{return [];}
-  },[]);
-
-  const infoBase = React.useMemo(()=>{
-    const emp = (cliente.empresa||'').toLowerCase().trim();
-    const cont = (cliente.conta||'').toLowerCase().trim();
-    return baseAtiva.find(r=>
-      (r.conta||'').toLowerCase().trim()===cont &&
-      (r.empresa||'').toLowerCase().trim()===emp
-    ) || baseAtiva.find(r=>(r.conta||'').toLowerCase().trim()===cont) || null;
-  },[cliente,baseAtiva]);
-
-  React.useEffect(()=>{
-    (async()=>{
-      // Tenta carregar do Supabase primeiro
-      const dados = await sbCarregarTratativas(supabaseClient, cliente.conta, cliente.empresa);
-      if(dados && dados.length > 0) {
-        setNotas(dados);
-        // Sincroniza localStorage
-        try{ localStorage.setItem('analise_trat_'+cliente.conta+'_'+cliente.empresa, JSON.stringify(dados.slice(0,50))); }catch{}
-      } else {
-        // Fallback: localStorage
-        try{ setNotas(JSON.parse(localStorage.getItem('analise_trat_'+cliente.conta+'_'+cliente.empresa)||'[]')); }catch{}
-      }
-    })();
-  },[cliente.conta, cliente.empresa]);
-
-  const salvar = async () => {
-    if(!obs.trim()) return;
-    setSaving(true);
-    const nota={
-      conta: cliente.conta,
-      cliente: cliente.cliente,
-      empresa: cliente.empresa,
-      texto: obs.trim(),
-      criado_em: new Date().toISOString(),
-      semana: semanaLabel||''
-    };
-    // Tenta salvar no Supabase
-    const sbOk = await sbSalvarTratativa(supabaseClient, nota);
-    if(!sbOk) {
-      // Fallback: localStorage
-      const key='analise_trat_'+cliente.conta+'_'+cliente.empresa;
-      const updated=[nota,...notas];
-      try{localStorage.setItem(key,JSON.stringify(updated.slice(0,50)));}catch{}
-    }
-    const updated=[nota,...notas];
-    setNotas(updated); setObs('');
-    setMsg(sbOk?'ok:Tratativa salva no Supabase!':'ok:Tratativa salva localmente');
-    setTimeout(()=>setMsg(''),3000); setSaving(false);
-  };
-
-  const clsF=(e)=>e>10?'c':e>=6?'a':'s';
-  const clsColor=(k)=>k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
-  const clsLabel=(k)=>k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
-  const cls=clsF(cliente.eventos); const cor=clsColor(cls);
-
-  // Deslocamentos cruzados por conta + empresa
-  const despCliente=(dispatches||[]).filter(d=>{
-    const dConta = String(d.account||d.conta||d.client_id||'').trim().toLowerCase();
-    const dEmp   = String(d.filial||d.empresa||d.company||'').trim().toLowerCase();
-    const cConta = String(cliente.conta||'').trim().toLowerCase();
-    const cEmp   = String(cliente.empresa||'').trim().toLowerCase();
-    if(dConta===cConta && dEmp && cEmp) return dEmp===cEmp || cEmp.includes(dEmp) || dEmp.includes(cEmp);
-    return dConta===cConta;
-  });
-
-  const inp={padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.06)',color:'#fff',fontSize:13,outline:'none',width:'100%',resize:'vertical'};
-  const isOk=msg.startsWith('ok:'); const msgText=msg.replace(/^(ok|err):/,'');
-
-  const tabStyle=(k)=>({
-    background:'transparent',border:'none',padding:'7px 16px',fontSize:13,cursor:'pointer',
-    color:abaModal===k?'#fff':'rgba(255,255,255,0.35)',fontWeight:abaModal===k?700:400,
-    borderBottom:'2px solid '+(abaModal===k?'#a78bfa':'transparent'),marginBottom:-1,transition:'all 0.15s'
-  });
-
-  return (
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.82)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}
-      onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{background:'#0d1424',border:'1px solid rgba(255,255,255,0.1)',borderRadius:20,width:'100%',maxWidth:720,maxHeight:'92vh',overflow:'auto',padding:0}}>
-
-        {/* Cabeçalho do modal */}
-        <div style={{padding:'22px 28px 16px',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}>
-            <div>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
-                <span style={{background:cor+'22',border:'1px solid '+cor+'44',color:cor,borderRadius:8,padding:'3px 10px',fontSize:12,fontWeight:700}}>
-                  {clsLabel(cls)}
-                </span>
-                <span style={{fontSize:11,color:'rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.05)',borderRadius:6,padding:'3px 9px',fontFamily:'monospace'}}>
-                  {cliente.conta}
-                </span>
-                {infoBase?.area&&<span style={{fontSize:11,background:'rgba(56,189,248,0.12)',color:'#7dd3fc',borderRadius:6,padding:'3px 9px'}}>{infoBase.area}</span>}
-              </div>
-              <div style={{fontSize:18,fontWeight:700,color:'#fff',marginBottom:4,lineHeight:1.2}}>{cliente.cliente}</div>
-              <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
-                <span style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>{(cliente.empresa||'').replace(/^\d+\.\s/,'')}</span>
-                <span style={{fontSize:12,color:cor,fontWeight:600}}>{cliente.eventos.toLocaleString('pt-BR')} eventos</span>
-                {infoBase?.mensalidade&&<span style={{fontSize:12,color:'#34d399'}}>&#128176; {infoBase.mensalidade}</span>}
-                {infoBase?.status&&<span style={{fontSize:11,background:'rgba(52,211,153,0.12)',color:'#6ee7b7',borderRadius:5,padding:'2px 8px',fontWeight:600}}>{infoBase.status}</span>}
-              </div>
-            </div>
-            <button onClick={onClose}
-              style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:9,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginLeft:12}}>
-              &#215;
-            </button>
-          </div>
-
-          {/* Abas do modal */}
-          <div style={{display:'flex',gap:2,marginTop:16,borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-            <button style={tabStyle('desl')} onClick={()=>setAbaModal('desl')}>
-              &#128664; Deslocamentos <span style={{background:'rgba(255,255,255,0.08)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{despCliente.length}</span>
-            </button>
-            <button style={tabStyle('trat')} onClick={()=>setAbaModal('trat')}>
-              &#128203; Tratativas <span style={{background:'rgba(255,255,255,0.08)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{notas.length}</span>
-            </button>
-            <button style={tabStyle('info')} onClick={()=>setAbaModal('info')}>
-              &#128196; Informa&ccedil;&otilde;es
-            </button>
-          </div>
-        </div>
-
-        {/* Conteúdo das abas */}
-        <div style={{padding:'20px 28px 28px'}}>
-
-          {/* Aba Deslocamentos */}
-          {abaModal==='desl'&&(
-            <div>
-              {despCliente.length===0?(
-                <div style={{textAlign:'center',padding:'32px 0'}}>
-                  <div style={{fontSize:36,opacity:.12,marginBottom:10}}>&#128664;</div>
-                  <div style={{fontSize:13,color:'rgba(255,255,255,0.2)',lineHeight:1.7}}>
-                    Nenhum deslocamento encontrado para esta conta<br/>
-                    <span style={{fontSize:11}}>Conta: {cliente.conta} &middot; Empresa: {(cliente.empresa||'').replace(/^\d+\.\s/,'')}</span>
-                  </div>
-                </div>
-              ):(
-                <React.Fragment>
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginBottom:12}}>
-                    {despCliente.length} deslocamento{despCliente.length>1?'s':''} encontrado{despCliente.length>1?'s':''} {semanaLabel&&'na semana '+semanaLabel}
-                  </div>
-                  <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,overflow:'hidden'}}>
-                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                      <thead>
-                        <tr style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-                          {['Data','Técnico','Tipo','Status','Obs.'].map(h=>(
-                            <th key={h} style={{padding:'8px 12px',textAlign:'left',color:'rgba(255,255,255,0.28)',fontSize:10,textTransform:'uppercase',letterSpacing:'.05em',background:'rgba(255,255,255,0.02)'}}>{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {despCliente.map((d,i)=>(
-                          <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.01)'}}>
-                            <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.5)',fontFamily:'monospace',fontSize:11}}>{d.date||d.data||d.created_at?.slice(0,10)||d.data_inicio?.slice(0,10)||'—'}</td>
-                            <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.7)'}}>{d.technician||d.tecnico||d.tech||d.nome_tecnico||'—'}</td>
-                            <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.5)'}}>{d.type||d.tipo||d.service_type||'—'}</td>
-                            <td style={{padding:'8px 12px'}}>
-                              <span style={{background:'rgba(52,211,153,0.1)',color:'#6ee7b7',borderRadius:5,padding:'2px 7px',fontSize:10,fontWeight:600}}>{d.status||'—'}</span>
-                            </td>
-                            <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.35)',fontSize:11,maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={d.obs||d.observacao||''}>{d.obs||d.observacao||'—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </React.Fragment>
-              )}
-            </div>
-          )}
-
-          {/* Aba Tratativas */}
-          {abaModal==='trat'&&(
-            <div>
-              <div style={{marginBottom:20}}>
-                <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em'}}>Nova tratativa</div>
-                <textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3}
-                  placeholder="Descreva a tratativa realizada, contato com o cliente, próximos passos..."
-                  style={{...inp,marginBottom:8}}/>
-                {msg&&<div style={{marginBottom:8,fontSize:12,color:isOk?'#34d399':'#f87171'}}>{isOk?'✅ ':''}{msgText}</div>}
-                <div style={{display:'flex',alignItems:'center',gap:10}}>
-                  <button onClick={salvar} disabled={saving||!obs.trim()}
-                    style={{padding:'8px 20px',borderRadius:10,border:'1px solid rgba(167,139,250,0.45)',background:saving||!obs.trim()?'rgba(167,139,250,0.05)':'rgba(167,139,250,0.18)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:saving||!obs.trim()?'not-allowed':'pointer'}}>
-                    {saving?'Salvando\u2026':'&#128190; Salvar tratativa'}
-                  </button>
-                  {!sbReady&&<span style={{fontSize:11,color:'rgba(255,255,255,0.2)'}}>Supabase offline &middot; salvo localmente</span>}
-                </div>
-              </div>
-
-              {notas.length>0&&(
-                <div>
-                  <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:12,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em'}}>
-                    Hist&oacute;rico &middot; {notas.length} tratativa{notas.length>1?'s':''}
-                  </div>
-                  {notas.map((n,i)=>(
-                    <div key={i} style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,padding:'12px 16px',marginBottom:10}}>
-                      <div style={{display:'flex',justifyContent:'space-between',marginBottom:8,flexWrap:'wrap',gap:6}}>
-                        <span style={{fontSize:11,color:'rgba(255,255,255,0.28)',fontFamily:'monospace'}}>
-                          {new Date(n.criado_em||n.created_at||Date.now()).toLocaleString('pt-BR')}
-                        </span>
-                        {n.semana&&<span style={{fontSize:10,background:'rgba(167,139,250,0.12)',color:'#a78bfa',borderRadius:5,padding:'2px 8px'}}>{n.semana}</span>}
-                      </div>
-                      <div style={{fontSize:13,color:'rgba(255,255,255,0.78)',lineHeight:1.65}}>{n.texto}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {notas.length===0&&obs===''&&(
-                <div style={{textAlign:'center',padding:'24px 0',color:'rgba(255,255,255,0.15)',fontSize:13}}>
-                  Nenhuma tratativa registrada ainda
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Aba Informações */}
-          {abaModal==='info'&&(
-            <div>
-              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-                {[
-                  ['Conta',cliente.conta,'monospace'],
-                  ['Cliente',cliente.cliente,null],
-                  ['Empresa',(cliente.empresa||'').replace(/^\d+\.\s/,''),null],
-                  ['Filial completa',cliente.empresa,null],
-                  ['Eventos esta semana',cliente.eventos.toLocaleString('pt-BR'),null],
-                  ['Classificação',clsLabel(clsF(cliente.eventos)),null],
-                  ['Mensalidade',infoBase?.mensalidade||'Não cadastrado',null],
-                  ['Status',infoBase?.status||'Não cadastrado',null],
-                  ['Área',infoBase?.area||'Não cadastrado',null],
-                  ['Cidade',infoBase?.cidade||'Não cadastrado',null],
-                  ['Bairro',infoBase?.bairro||'Não cadastrado',null],
-                ].map(([l,v,ff])=>(
-                  <div key={l} style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 14px',border:'1px solid rgba(255,255,255,0.06)'}}>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:5}}>{l}</div>
-                    <div style={{fontSize:13,color:'rgba(255,255,255,0.8)',fontFamily:ff||'inherit',fontWeight:ff?400:500,wordBreak:'break-word'}}>{v||'—'}</div>
-                  </div>
-                ))}
-              </div>
-              {!infoBase&&(
-                <div style={{marginTop:14,padding:'10px 14px',borderRadius:10,background:'rgba(251,191,36,0.07)',border:'1px solid rgba(251,191,36,0.2)',fontSize:12,color:'#fbbf24'}}>
-                  &#9888; Este cliente não foi encontrado na Base Ativa. Importe a base para vincular mensalidade, status e área.
-                </div>
-              )}
-            </div>
-          )}
-
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════
-//  ANÁLISE DE BASES — começa vazia, importa 2 semanas
-// ════════════════════════════════════════════════════
-function AnaliseBases({supabaseClient, dispatches}) {
-  const clsF     = (e) => e>10?'c':e>=6?'a':'s';
-  const clsColor = (k) => k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
-
-  const [weeks,  setWeeks]  = React.useState([]);       // começa vazio
-  const [cw,     setCw]     = React.useState(0);
-  const [tab,    setTab]    = React.useState('c');
-  const [abaMain, setAbaMain] = React.useState('lista'); // 'lista' | 'migracoes'
-  const [search, setSearch] = React.useState('');
-  const [empFil, setEmpFil] = React.useState('');
-  const [evof,   setEvof]   = React.useState('');
-  const [soloPI, setSoloPI] = React.useState(false);
-  const [page,   setPage]   = React.useState(0);
-  const [modal,       setModal]       = React.useState(null);
-  const [novosClientes,  setNovosClientes]  = React.useState([]);
-  const [showNovos,      setShowNovos]      = React.useState(false);
-  const [importPending,  setImportPending]  = React.useState(null); // {rows, sugLabel}
-  const [importLabel,    setImportLabel]    = React.useState('');
-  const [dbStatus,    setDbStatus]    = React.useState(null);
-  const [dbMsg,       setDbMsg]       = React.useState('');
-  const [showSql,     setShowSql]     = React.useState(false);
-  const [alertas,     setAlertas]     = React.useState([]);
-  const [sinoAberto,  setSinoAberto]  = React.useState(false);
-  const [alertasLidos,setAlertasLidos]= React.useState(()=>{
-    try{ return JSON.parse(localStorage.getItem('vtr_alertas_lidos')||'[]'); }catch{return [];}
-  });
-  const chartRef  = React.useRef(null);
-  const chartInst = React.useRef(null);
-  const PS = 15;
-
-  // Carrega semanas salvas do Supabase ao montar e completa com Base Ativa
-  React.useEffect(()=>{
-    (async()=>{
-      const dados = await sbCarregarSemanas(supabaseClient);
-      if(dados && dados.length > 0) {
-        // Completar cada semana com clientes ausentes da Base Ativa (0 eventos)
-        let baseAtiva = [];
-        try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
-        const completadas = dados.map(w => {
-          const contasRelatorio = new Set(w.rows.map(r=>(r.conta||'').toLowerCase().trim()));
-          const ausentes = baseAtiva
-            .filter(b => !contasRelatorio.has((b.conta||'').toLowerCase().trim()))
-            .map(b => ({conta:(b.conta||'').trim(), empresa:(b.empresa||'').trim(), cliente:(b.cliente||'').trim(), eventos:0}));
-          return { label: w.label, rows: [...w.rows, ...ausentes] };
-        });
-        console.log('[Semanas] Carregadas:', completadas.map(w=>w.label+':'+w.rows.length));
-        setWeeks(completadas);
-        setCw(completadas.length - 1);
-      }
-    })();
-  }, [supabaseClient]);
-
-  // Criação automática da tabela Supabase
-  React.useEffect(()=>{
-    if(!supabaseClient||!window._supabaseReady) return;
-    setDbStatus('checking');
-    (async()=>{
-      const {error:chk} = await supabaseClient.from('analise_tratativas').select('id').limit(1);
-      if(!chk){setDbStatus('ok');return;}
-      setDbStatus('creating');
-      const SQL=`CREATE TABLE IF NOT EXISTS public.analise_tratativas (
-  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
-  conta text NOT NULL,
-  cliente text,
-  empresa text,
-  texto text NOT NULL,
-  semana text,
-  criado_em timestamptz DEFAULT now()
-);
-ALTER TABLE public.analise_tratativas ENABLE ROW LEVEL SECURITY;
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='analise_tratativas' AND policyname='acesso_total') THEN
-    CREATE POLICY acesso_total ON public.analise_tratativas FOR ALL USING (true) WITH CHECK (true);
-  END IF;
-END $$;`;
-      const {error:rpc} = await supabaseClient.rpc('exec_sql',{sql:SQL});
-      if(!rpc){setDbStatus('ok');setDbMsg('Tabela criada com sucesso!');return;}
-      setDbStatus('sql'); setDbMsg(SQL);
-    })();
-  },[supabaseClient]);
-
-
-  // ── Engine de alertas ──────────────────────────────
-  const gerarAlertas = React.useCallback((wks) => {
-    if(!wks || wks.length < 2) return;
-    const curr = wks[wks.length - 1];
-    const prev = wks[wks.length - 2];
-    const norm = (s) => (s||'').toLowerCase().trim();
-
-    const matchRow = (rowA, rowB) =>
-      norm(rowA.conta) === norm(rowB.conta) &&
-      (norm(rowA.empresa) === norm(rowB.empresa) ||
-       norm(rowA.empresa).includes(norm(rowB.empresa)) ||
-       norm(rowB.empresa).includes(norm(rowA.empresa)));
-
-    const novosAlertas = [];
-    const clsF = (e) => e>10?'c':e>=6?'a':'s';
-    const clsLabel = (k) => k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
-    const clsIcon  = (k) => k==='c'?'🔴':k==='a'?'🟡':'🟢';
-
-    // Buscar tratativas salvas
-    const getTratativas = (conta, empresa) => {
-      try{
-        const key='analise_trat_'+conta+'_'+empresa;
-        return JSON.parse(localStorage.getItem(key)||'[]');
-      }catch{return [];}
-    };
-
-    curr.rows.forEach(r => {
-      const p = prev.rows.find(pRow => matchRow(r, pRow));
-      if(!p) return;
-      const ps = clsF(p.eventos), cs = clsF(r.eventos);
-      const id = r.conta + '_' + norm(r.empresa) + '_' + curr.label;
-
-      // Alerta 1: Piora para crítico
-      if(cs === 'c' && ps !== 'c') {
-        novosAlertas.push({
-          id, tipo:'piora_critico',
-          prioridade: 1,
-          titulo: 'Piorou para crítico',
-          cliente: r.cliente, conta: r.conta, empresa: r.empresa,
-          detalhe: clsIcon(ps)+' '+clsLabel(ps)+' → '+clsIcon(cs)+' '+clsLabel(cs),
-          eventos: r.eventos, eventosAnt: p.eventos,
-          semana: curr.label,
-          row: r
-        });
-      }
-      // Alerta 2: Qualquer piora de categoria
-      else if(['c','a','s'].indexOf(cs) < ['c','a','s'].indexOf(ps)) {
-        novosAlertas.push({
-          id, tipo:'piora',
-          prioridade: 2,
-          titulo: 'Piorou de categoria',
-          cliente: r.cliente, conta: r.conta, empresa: r.empresa,
-          detalhe: clsIcon(ps)+' '+clsLabel(ps)+' → '+clsIcon(cs)+' '+clsLabel(cs),
-          eventos: r.eventos, eventosAnt: p.eventos,
-          semana: curr.label,
-          row: r
-        });
-      }
-    });
-
-    // Alerta 3: 2+ semanas crítico sem tratativa
-    if(wks.length >= 2) {
-      curr.rows.forEach(r => {
-        if(clsF(r.eventos) !== 'c') return;
-        const p = prev.rows.find(pRow => matchRow(r, pRow));
-        if(!p || clsF(p.eventos) !== 'c') return;
-        const trativas = getTratativas(r.conta, r.empresa);
-        const semanaAnterior = prev.label;
-        const temTrativa = trativas.some(t => t.semana === semanaAnterior || t.semana === curr.label);
-        if(!temTrativa) {
-          const id = r.conta + '_' + norm(r.empresa) + '_sem_trat_' + curr.label;
-          const jaExiste = novosAlertas.some(a => a.conta === r.conta && norm(a.empresa) === norm(r.empresa));
-          if(!jaExiste) {
-            novosAlertas.push({
-              id, tipo:'sem_tratativa',
-              prioridade: 1,
-              titulo: '2ª semana crítico sem tratativa',
-              cliente: r.cliente, conta: r.conta, empresa: r.empresa,
-              detalhe: '🔴 Crítico nas últimas 2 semanas · Nenhuma tratativa registrada',
-              eventos: r.eventos, eventosAnt: p.eventos,
-              semana: curr.label,
-              row: r
-            });
-          }
-        }
-      });
-    }
-
-    // Ordenar: prioridade 1 primeiro, depois por eventos
-    novosAlertas.sort((a,b) => a.prioridade - b.prioridade || b.eventos - a.eventos);
-    setAlertas(novosAlertas);
-    if(novosAlertas.length > 0) setSinoAberto(true);
-  }, []);
-
-  // Dispara alertas ao abrir (quando weeks muda)
-  React.useEffect(()=>{
-    gerarAlertas(weeks);
-  }, [weeks, gerarAlertas]);
-
-  const marcarLidos = () => {
-    const ids = alertas.map(a => a.id);
-    const novosLidos = [...new Set([...alertasLidos, ...ids])];
-    setAlertasLidos(novosLidos);
-    try{ localStorage.setItem('vtr_alertas_lidos', JSON.stringify(novosLidos.slice(-500))); }catch{}
-  };
-
-  const alertasNaoLidos = alertas.filter(a => !alertasLidos.includes(a.id));
-  const alertasCriticos    = alertas.filter(a => a.tipo === 'piora_critico' || a.tipo === 'sem_tratativa');
-  const alertasPiora       = alertas.filter(a => a.tipo === 'piora');
-
-  const getTotals = (rows) => ({
-    c: rows.filter(r=>clsF(r.eventos)==='c').length,
-    a: rows.filter(r=>clsF(r.eventos)==='a').length,
-    s: rows.filter(r=>clsF(r.eventos)==='s').length,
-    t: rows.length,
-  });
-
-  // Cruzamento por conta + empresa (filial)
-  const getEvo = (conta, empresa, ci) => {
-    if(ci===0) return {label:'base',cls:'gray',k:'base'};
-    const nc = (conta||'').toLowerCase().trim();
-    // Cruzamento por conta apenas — empresa já está normalizada no mesmo formato
-    const p = weeks[ci-1].rows.find(r => (r.conta||'').toLowerCase().trim()===nc);
-    const c = weeks[ci].rows.find(r => (r.conta||'').toLowerCase().trim()===nc);
-    if(!p) return {label:'novo',cls:'blue',k:'novo'};
-    const ps=clsF(p.eventos), cs=clsF(c?c.eventos:0);
-    const o={c:3,a:2,s:1};
-    if(ps===cs){
-      if(cs==='c') return {label:'manteve crítico',cls:'red',k:'mc'};
-      if(cs==='a') return {label:'manteve atenção',cls:'amber',k:'ma'};
-      return {label:'manteve saudável',cls:'green',k:'ms'};
-    }
-    if(o[cs]>o[ps]) return cs==='c'?{label:'piorou → crítico',cls:'red',k:'pc'}:{label:'piorou → atenção',cls:'amber',k:'pa'};
-    return cs==='s'?{label:'melhorou → saudável',cls:'green',k:'mels'}:{label:'melhorou → atenção',cls:'amber',k:'mela'};
-  };
-
-  const evBadge = (cls) => {
-    const m={red:['rgba(239,68,68,0.18)','#fca5a5'],amber:['rgba(251,191,36,0.18)','#fde68a'],green:['rgba(52,211,153,0.18)','#6ee7b7'],blue:['rgba(56,189,248,0.18)','#7dd3fc'],gray:['rgba(255,255,255,0.07)','rgba(255,255,255,0.35)']};
-    const [bg,color]=m[cls]||m.gray;
-    return {background:bg,color,display:'inline-flex',alignItems:'center',padding:'3px 9px',borderRadius:6,fontSize:11,fontWeight:600,whiteSpace:'nowrap'};
-  };
-
-  const getRows = () => {
-    if(!weeks.length) return [];
-    let r=weeks[cw].rows.filter(x=>clsF(x.eventos)===tab);
-    if(soloPI) r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
-    if(search){const q=search.toLowerCase();r=r.filter(x=>(x.cliente||'').toLowerCase().includes(q)||(x.conta||'').toLowerCase().includes(q));}
-    if(empFil) r=r.filter(x=>x.empresa===empFil);
-    if(evof&&cw>0) r=r.filter(x=>getEvo(x.conta,x.empresa,cw).k===evof);
-    return r;
-  };
-
-  const getCmp = () => {
-    if(cw===0||weeks.length<2) return null;
-    const pp=getTotals(weeks[cw-1].rows), cp=getTotals(weeks[cw].rows);
-    const mv={pc:0,pa:0,mc:0,ma:0,ms:0,mels:0,mela:0,novo:0};
-    // Cruzar por conta apenas
-    const s1idx = {};
-    weeks[cw-1].rows.forEach(r=>{ s1idx[(r.conta||'').toLowerCase().trim()] = r; });
-    weeks[cw].rows.forEach(r=>{
-      const nc=(r.conta||'').toLowerCase().trim();
-      if(!s1idx[nc]){mv.novo++;return;}
-      const ps=clsF(s1idx[nc].eventos), cs=clsF(r.eventos);
-      const o={c:3,a:2,s:1};
-      if(ps===cs){if(cs==='c')mv.mc++;else if(cs==='a')mv.ma++;else mv.ms++;}
-      else if(o[cs]>o[ps]){if(cs==='c')mv.pc++;else mv.pa++;}
-      else{if(cs==='s')mv.mels++;else mv.mela++;}
-    });
-    return {pp,cp,mv};
-  };
-
-  const handleFile = (e) => {
-    const file=e.target.files[0]; if(!file) return;
-    const reader=new FileReader();
-    reader.onload=(ev)=>{
-      try{
-        const wb=XLSX.read(ev.target.result,{type:'array'});
-        const rows=[];
-        wb.SheetNames.forEach(name=>{
-          const ws=wb.Sheets[name];
-          const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
-          let sr=0, colEmp=0, colCont=1, colCli=2, colEvt=3;
-          for(let i=0;i<Math.min(5,data.length);i++){
-            const v=data[i].map((x,idx)=>({val:String(x||'').toLowerCase(),idx}));
-            if(v.some(x=>x.val.includes('empresa')||x.val.includes('conta')||x.val.includes('fantasia')||x.val.includes('quantidade'))){
-              sr=i+1;
-              v.forEach(({val,idx})=>{
-                if(val.includes('empresa')) colEmp=idx;
-                else if(val.includes('conta')) colCont=idx;
-                else if(val.includes('fantasia')||val.includes('cliente')) colCli=idx;
-                else if(val.includes('quantidade')||val.includes('eventos')||val.includes('event')) colEvt=idx;
-              });
-              break;
-            }
-          }
-          for(let i=sr;i<data.length;i++){
-            const r=data[i];
-            const emp=String(r[colEmp]||'').trim();
-            const cont=String(r[colCont]||'').trim();
-            const cli=String(r[colCli]||'').trim();
-            const evtRaw=String(r[colEvt]||'0').replace(/[^\d]/g,'');
-            const evs=parseInt(evtRaw)||0;
-            if(emp&&cont&&cli) rows.push({conta:cont,cliente:cli,empresa:emp,eventos:evs});
-          }
-        });
-        if(!rows.length){alert('Nenhum dado encontrado. Verifique as colunas do arquivo (Empresa, Conta, Fantasia, Quantidade de eventos).');return;}
-        // Garantir que eventos é sempre número
-        rows.forEach(r=>{ r.eventos = parseInt(r.eventos)||0; });
-        console.log('[Import] Importados:', rows.length, '| Exemplo:', rows[0]);
-        const today=new Date();
-        const mon=new Date(today);mon.setDate(today.getDate()-((today.getDay()+6)%7));
-        const sun=new Date(mon);sun.setDate(mon.getDate()+6);
-        const fmt=d=>String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0');
-        const label=fmt(mon)+' – '+fmt(sun);
-        // Sugerir label a partir do nome do arquivo
-        const fname = (file.name||'').replace(/\.xlsx?$/i,'').replace(/_/g,'/').replace(/\s+/g,' ').trim();
-        // Tenta extrair datas do nome: 04_05_2026_10_05_2026 → 04/05 – 10/05
-        const dateMatch = fname.match(/(\d{2})[_\/](\d{2})(?:[_\/]\d{4})?[^\d]+(\d{2})[_\/](\d{2})/);
-        const sugLabel = dateMatch
-          ? dateMatch[1]+'/'+dateMatch[2]+' – '+dateMatch[3]+'/'+dateMatch[4]
-          : fname;
-
-        setImportPending({rows, sugLabel});
-        setImportLabel(sugLabel);
-      }catch(err){alert('Erro ao ler arquivo: '+err.message);}
-    };
-    reader.readAsArrayBuffer(file);
-    e.target.value='';
-  };
-
-  const confirmarImport = async (label, rows) => {
-    setImportPending(null);
-
-    let baseAtiva = [];
-    try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
-    const normStr = s => (s||'').toLowerCase().trim();
-
-    // Clientes do relatório (com trim nas contas)
-    const rowsNorm = rows.map(r=>({...r, conta:(r.conta||'').trim(), empresa:(r.empresa||'').trim()}));
-    const contasImport = new Set(rowsNorm.map(r=>normStr(r.conta)));
-
-    // PONTO 1: Adicionar clientes da Base Ativa com 0 eventos (ausentes no relatório)
-    const ausentes = baseAtiva
-      .filter(b => !contasImport.has(normStr(b.conta)))
-      .map(b => ({
-        conta:   (b.conta  ||'').trim(),
-        empresa: (b.empresa||'').trim(),
-        cliente: (b.cliente||'').trim(),
-        eventos: 0
-      }));
-    const rowsCompletos = [...rowsNorm, ...ausentes];
-    console.log('[Import] Relatório:', rowsNorm.length, '| Base Ativa ausentes:', ausentes.length, '| Total:', rowsCompletos.length);
-
-    // Clientes no relatório que não estão na Base Ativa
-    const novos = rowsNorm.filter(r =>
-      !baseAtiva.some(b => normStr(b.conta)===normStr(r.conta))
-    );
-    if(novos.length > 0){ setNovosClientes(novos); setShowNovos(true); }
-    else{ setNovosClientes([]); setShowNovos(false); }
-
-    // Salva no Supabase APENAS os rows do relatório (sem os ausentes da Base Ativa)
-    // Os ausentes são calculados dinamicamente — evita salvar 5k registros por semana
-    sbSalvarSemana(supabaseClient, label, rowsNorm).then(ok=>{
-      console.log('[Semana] Supabase:', ok ? 'ok' : 'falhou', '| Salvos:', rowsNorm.length);
-    });
-
-    setWeeks(prev=>{
-      const ei=prev.findIndex(w=>w.label===label);
-      let nw;
-      if(ei>=0){nw=[...prev];nw[ei]={label,rows:rowsCompletos};setCw(ei);}
-      else{nw=[...prev,{label,rows:rowsCompletos}];setCw(nw.length-1);}
-      return nw;
-    });
-    setTab('c');setPage(0);setSearch('');setEmpFil('');setEvof('');setSoloPI(false);
-  };
-
-  const getMigracoes = () => {
-    if(!weeks.length || weeks.length < 2) return [];
-    const prev = weeks[cw > 0 ? cw-1 : 0];
-    const curr = weeks[cw];
-    if(cw === 0) return [];
-    const s1idx = {};
-    prev.rows.forEach(r=>{ s1idx[(r.conta||'').toLowerCase().trim()] = r; });
-    const result = [];
-    curr.rows.forEach(r => {
-      const nc = (r.conta||'').toLowerCase().trim();
-      const p = s1idx[nc];
-      if(!p) return;
-      const ps = clsF(p.eventos), cs = clsF(r.eventos);
-      if(ps !== cs) {
-        const order = {c:3,a:2,s:1};
-        const direcao = order[cs] < order[ps] ? 'melhora' : 'piora';
-        result.push({
-          conta: r.conta, cliente: r.cliente, empresa: r.empresa,
-          eventosAnt: p.eventos, eventosAtu: r.eventos,
-          classeAnt: ps, classeAtu: cs, direcao,
-          semanaAnt: prev.label, semanaAtu: curr.label,
-        });
-      }
-    });
-    // Ordenar: pioras primeiro, depois melhoras; dentro de cada grupo por eventos
-    result.sort((a,b) => {
-      if(a.direcao !== b.direcao) return a.direcao==='piora'?-1:1;
-      return b.eventosAtu - a.eventosAtu;
-    });
-    return result;
-  };
-
-  const limpar=async()=>{
-    if(!window.confirm('Limpar todas as semanas importadas?')) return;
-    setWeeks([]);setCw(0);setTab('c');setPage(0);setSearch('');setEmpFil('');setEvof('');setSoloPI(false);
-    await sbLimparSemanas(supabaseClient);
-  };
-
-  // Gráfico
-  React.useEffect(()=>{
-    if(!chartRef.current||!weeks.length) return;
-    if(chartInst.current){chartInst.current.destroy();chartInst.current=null;}
-    const w=weeks[cw]; const t=getTotals(w.rows);
-    const hp=cw>0&&weeks.length>1; const tp=hp?getTotals(weeks[cw-1].rows):null;
-    if(hp){
-      chartInst.current=new Chart(chartRef.current,{
-        type:'bar',
-        data:{
-          labels:['Críticos','Atenção','Saudáveis'],
-          datasets:[
-            {label:weeks[cw-1].label,data:[tp.c,tp.a,tp.s],backgroundColor:'rgba(255,255,255,0.07)',borderColor:'rgba(255,255,255,0.2)',borderWidth:1,borderRadius:4},
-            {label:w.label,data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.7)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:1,borderRadius:4}
-          ]
-        },
-        options:{responsive:true,maintainAspectRatio:false,
-          plugins:{legend:{labels:{color:'rgba(255,255,255,0.35)',font:{size:10}}}},
-          scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)'}}}}
-      });
-    } else {
-      chartInst.current=new Chart(chartRef.current,{
-        type:'doughnut',
-        data:{
-          labels:['Críticos','Atenção','Saudáveis'],
-          datasets:[{data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.8)','rgba(251,191,36,0.8)','rgba(52,211,153,0.8)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:2,hoverOffset:6}]
-        },
-        options:{responsive:true,maintainAspectRatio:false,cutout:'65%',
-          plugins:{legend:{display:false},tooltip:{callbacks:{label:(ctx)=>' '+ctx.label+': '+ctx.raw+' ('+Math.round(ctx.raw/t.t*100)+'%)'}}}}
-      });
-    }
-  },[cw,weeks]);
-
-  // Renderização com semanas vazias
-  if(!weeks.length){
-    return (
-      <div style={{animation:'fadeUp 0.3s ease'}}>
-
-        {/* Modal de confirmação do label mesmo na tela vazia */}
-        {importPending && (
-          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}>
-            <div style={{background:'#0d1424',border:'1px solid rgba(167,139,250,0.3)',borderRadius:20,width:'100%',maxWidth:480,padding:28}}>
-              <div style={{fontSize:16,fontWeight:700,color:'#fff',marginBottom:6}}>Confirmar importação</div>
-              <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:20}}>{importPending.rows.length} clientes carregados. Defina o nome desta semana:</div>
-              <input
-                value={importLabel}
-                onChange={e=>setImportLabel(e.target.value)}
-                placeholder="Ex: 04/05 – 10/05"
-                style={{width:'100%',padding:'10px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:14,outline:'none',marginBottom:16,boxSizing:'border-box'}}
-                autoFocus
-                onKeyDown={e=>{ if(e.key==='Enter'&&importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
-              />
-              <div style={{display:'flex',gap:10}}>
-                <button onClick={()=>{ if(importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
-                  disabled={!importLabel.trim()}
-                  style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.15)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                  Importar como "{importLabel||'...'}"
-                </button>
-                <button onClick={()=>setImportPending(null)}
-                  style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>
-                  Cancelar
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:32,flexWrap:'wrap',gap:12}}>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
-              <div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/>
-              <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>Análise de Bases</span>
-            </div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Importe a 1ª semana para começar a análise</div>
-          </div>
-          <label style={{padding:'9px 20px',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.12)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:8}}>
-            Importar 1ª semana
-            <input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/>
-          </label>
-        </div>
-        <div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:20,padding:'72px 24px',textAlign:'center'}}>
-          <div style={{fontSize:52,marginBottom:16,opacity:.1}}>&#128202;</div>
-          <div style={{fontSize:16,fontWeight:600,color:'rgba(255,255,255,0.25)',marginBottom:10}}>Nenhuma semana importada</div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.15)',lineHeight:1.8,maxWidth:420,margin:'0 auto'}}>
-            Exporte a planilha do seu sistema e importe aqui.<br/>
-            <code style={{color:'rgba(167,139,250,0.5)',fontSize:11}}>Empresa &middot; Conta &middot; Fantasia &middot; Quantidade de eventos</code><br/>
-            <span style={{fontSize:11}}>Importe a 1ª semana como base &rarr; depois a 2ª para ver o comparativo</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const w=weeks[cw]; const t=getTotals(w.rows); const cmp=getCmp();
-  const tabRows=getRows(); const start=page*PS; const pageRows=tabRows.slice(start,start+PS);
-  const hp=cw>0&&weeks.length>1; const prevRows=hp?weeks[cw-1].rows:[];
-  const empresas=[...new Set(w.rows.map(r=>r.empresa||''))].filter(Boolean).sort();
-  const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
-  const dlt=(c,p)=>{const d=c-p;if(!d)return <span style={{color:'rgba(255,255,255,0.2)'}}>&#8211;</span>;return <span style={{color:d>0?'#f87171':'#34d399',fontWeight:700}}>{d>0?'+':''}{d}</span>;};
-
-  return (
-    <div style={{animation:'fadeUp 0.3s ease'}}>
-
-      {/* Modal de confirmação do label da semana */}
-      {importPending && (
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}>
-          <div style={{background:'#0d1424',border:'1px solid rgba(167,139,250,0.3)',borderRadius:20,width:'100%',maxWidth:480,padding:28}}>
-            <div style={{fontSize:16,fontWeight:700,color:'#fff',marginBottom:6}}>
-              &#128229; Confirmar importação
-            </div>
-            <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:20}}>
-              {importPending.rows.length} clientes carregados. Defina o nome desta semana:
-            </div>
-            <div style={{marginBottom:16}}>
-              <label style={{fontSize:11,color:'rgba(255,255,255,0.4)',textTransform:'uppercase',letterSpacing:'.06em',display:'block',marginBottom:6}}>
-                Nome / período da semana
-              </label>
-              <input
-                value={importLabel}
-                onChange={e=>setImportLabel(e.target.value)}
-                placeholder="Ex: 04/05 – 10/05"
-                style={{width:'100%',padding:'10px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:14,outline:'none'}}
-                autoFocus
-                onKeyDown={e=>{ if(e.key==='Enter'&&importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
-              />
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',marginTop:6}}>
-                Sugestão baseada no nome do arquivo. Edite se necessário.
-              </div>
-            </div>
-            <div style={{display:'flex',gap:10}}>
-              <button
-                onClick={()=>{ if(importLabel.trim()) confirmarImport(importLabel.trim(), importPending.rows); }}
-                disabled={!importLabel.trim()}
-                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.15)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                &#10003; Importar como "{importLabel || '...'}"
-              </button>
-              <button
-                onClick={()=>setImportPending(null)}
-                style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de novos clientes não encontrados na Base Ativa */}
-      {showNovos && novosClientes.length > 0 && (
-        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9998,padding:20}}
-          onClick={e=>e.target===e.currentTarget&&setShowNovos(false)}>
-          <div style={{background:'#0d1424',border:'1px solid rgba(251,191,36,0.3)',borderRadius:20,width:'100%',maxWidth:680,maxHeight:'85vh',overflow:'auto',padding:28}}>
-            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:20}}>
-              <div>
-                <div style={{fontSize:16,fontWeight:700,color:'#fbbf24',marginBottom:4}}>
-                  ⚠️ {novosClientes.length} cliente{novosClientes.length>1?'s':''} não encontrado{novosClientes.length>1?'s':''} na Base Ativa
-                </div>
-                <div style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>
-                  Esses clientes estão no relatório importado mas não constam na Base Ativa. Deseja adicioná-los?
-                </div>
-              </div>
-              <button onClick={()=>setShowNovos(false)}
-                style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>×</button>
-            </div>
-
-            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,overflow:'hidden',marginBottom:16,maxHeight:340,overflowY:'auto'}}>
-              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                <thead>
-                  <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                    {['Conta','Cliente','Empresa','Eventos'].map(h=>(
-                      <th key={h} style={{padding:'8px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.06em'}}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {novosClientes.slice(0,100).map((r,i)=>(
-                    <tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)'}}>
-                      <td style={{padding:'7px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.conta}</td>
-                      <td style={{padding:'7px 14px',color:'rgba(255,255,255,0.8)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>{r.cliente}</td>
-                      <td style={{padding:'7px 14px',fontSize:11,color:'rgba(255,255,255,0.4)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
-                      <td style={{padding:'7px 14px',fontWeight:600,color:'#fff'}}>{(r.eventos||0).toLocaleString('pt-BR')}</td>
-                    </tr>
-                  ))}
-                  {novosClientes.length > 100 && (
-                    <tr><td colSpan={4} style={{padding:'8px 14px',textAlign:'center',color:'rgba(255,255,255,0.25)',fontSize:11}}>... e mais {novosClientes.length-100} clientes</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{display:'flex',gap:10}}>
-              <button onClick={async()=>{
-                const novosParaBase = novosClientes.map(r=>({
-                  empresa: r.empresa, conta: r.conta, cliente: r.cliente,
-                  mensalidade:'', status:'Ativo', area:'', cidade:'', bairro:''
-                }));
-                let baseAtiva = [];
-                try{ baseAtiva = JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]'); }catch{}
-                const atualizada = [...baseAtiva, ...novosParaBase];
-                try{ localStorage.setItem('vtr_base_ativa', JSON.stringify(atualizada)); }catch{}
-                await sbSalvarBaseAtiva(supabaseClient, atualizada);
-                setShowNovos(false);
-                setNovosClientes([]);
-                alert(novosClientes.length+' cliente(s) adicionados à Base Ativa!');
-              }}
-                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                ✅ Sim, adicionar à Base Ativa
-              </button>
-              <button onClick={()=>setShowNovos(false)}
-                style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.5)',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                Ignorar por agora
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {modal&&<ClienteAnaliseModal
-        cliente={modal}
-        semanaLabel={w.label}
-        dispatches={dispatches||[]}
-        supabaseClient={supabaseClient}
-        onClose={()=>setModal(null)}
-      />}
-
-      {/* Banner Supabase */}
-      {dbStatus==='checking'&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,background:'rgba(251,191,36,0.07)',border:'1px solid rgba(251,191,36,0.2)',fontSize:12,color:'#fbbf24',display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:'#fbbf24'}}/>Verificando tabela de tratativas no Supabase...</div>}
-      {dbStatus==='creating'&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,background:'rgba(56,189,248,0.07)',border:'1px solid rgba(56,189,248,0.2)',fontSize:12,color:'#38bdf8',display:'flex',alignItems:'center',gap:8}}><div style={{width:8,height:8,borderRadius:'50%',background:'#38bdf8'}}/>Criando tabela analise_tratativas...</div>}
-      {dbStatus==='ok'&&dbMsg&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,background:'rgba(52,211,153,0.07)',border:'1px solid rgba(52,211,153,0.2)',fontSize:12,color:'#34d399',display:'flex',justifyContent:'space-between',alignItems:'center'}}>&#10003; {dbMsg}<button onClick={()=>setDbMsg('')} style={{background:'none',border:'none',color:'rgba(52,211,153,0.5)',cursor:'pointer',fontSize:16}}>&#215;</button></div>}
-      {dbStatus==='sql'&&<div style={{marginBottom:16,borderRadius:12,overflow:'hidden',border:'1px solid rgba(239,68,68,0.3)'}}>
-        <div style={{padding:'10px 16px',background:'rgba(239,68,68,0.08)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-          <span style={{fontSize:12,color:'#f87171',fontWeight:600}}>&#9888; Crie a tabela manualmente no Supabase SQL Editor</span>
-          <button onClick={()=>setShowSql(v=>!v)} style={{padding:'4px 10px',borderRadius:7,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.1)',color:'#f87171',fontSize:11,cursor:'pointer'}}>{showSql?'Ocultar':'Ver SQL'}</button>
-        </div>
-        {showSql&&<div style={{position:'relative'}}><pre style={{margin:0,padding:'12px 16px',background:'rgba(0,0,0,0.3)',color:'rgba(255,255,255,0.65)',fontSize:11,lineHeight:1.6,overflowX:'auto',whiteSpace:'pre-wrap'}}>{dbMsg}</pre><button onClick={()=>{try{navigator.clipboard.writeText(dbMsg);}catch{}}} style={{position:'absolute',top:8,right:8,padding:'4px 10px',borderRadius:7,border:'1px solid rgba(255,255,255,0.15)',background:'rgba(255,255,255,0.08)',color:'rgba(255,255,255,0.5)',fontSize:11,cursor:'pointer'}}>Copiar</button></div>}
-      </div>}
-
-      {/* ── Painel de Alertas ── */}
-      {sinoAberto && alertas.length>0&&(
-        <div style={{marginBottom:20,background:'#0d1424',border:'1px solid rgba(255,255,255,0.1)',borderRadius:16,overflow:'hidden'}}>
-
-          {/* Header do painel */}
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'14px 20px',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-            <div style={{display:'flex',alignItems:'center',gap:10}}>
-              <span style={{fontSize:15,fontWeight:700,color:'#fff'}}>&#128276; Central de Alertas</span>
-              <span style={{background:'rgba(239,68,68,0.15)',color:'#f87171',borderRadius:99,padding:'2px 9px',fontSize:11,fontWeight:700}}>{alertas.length} alerta{alertas.length>1?'s':''}</span>
-              {alertasNaoLidos.length>0&&<span style={{background:'rgba(239,68,68,0.1)',color:'#fca5a5',borderRadius:99,padding:'2px 9px',fontSize:10}}>{alertasNaoLidos.length} não lido{alertasNaoLidos.length>1?'s':''}</span>}
-            </div>
-            <div style={{display:'flex',gap:8}}>
-              {alertasNaoLidos.length>0&&<button onClick={marcarLidos}
-                style={{padding:'4px 12px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.5)',fontSize:11,cursor:'pointer'}}>
-                Marcar todos como lidos
-              </button>}
-              <button onClick={()=>setSinoAberto(false)}
-                style={{padding:'4px 10px',borderRadius:8,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.05)',color:'rgba(255,255,255,0.5)',fontSize:12,cursor:'pointer'}}>
-                &#215;
-              </button>
-            </div>
-          </div>
-
-          {/* Resumo em cards */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:1,background:'rgba(255,255,255,0.04)'}}>
-            {[
-              ['🔴 Pioraram → crítico', alertasCriticos.filter(a=>a.tipo==='piora_critico').length, '#f87171','rgba(239,68,68,0.08)'],
-              ['⚠️ 2ª sem. crítico s/ tratativa', alertasCriticos.filter(a=>a.tipo==='sem_tratativa').length, '#fbbf24','rgba(251,191,36,0.08)'],
-              ['📉 Outras pioras', alertasPiora.length, '#fb923c','rgba(251,146,60,0.08)'],
-            ].map(([l,v,c,bg])=>(
-              <div key={l} style={{background:bg,padding:'12px 16px',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-                <span style={{fontSize:12,color:'rgba(255,255,255,0.55)'}}>{l}</span>
-                <span style={{fontSize:22,fontWeight:700,color:c}}>{v}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Lista de alertas */}
-          <div style={{maxHeight:340,overflowY:'auto',padding:'8px 0'}}>
-            {alertasCriticos.length>0&&(
-              <div style={{padding:'8px 20px 4px',fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.07em',fontWeight:600}}>
-                Prioridade alta
-              </div>
-            )}
-            {alertasCriticos.map((a,i)=>{
-              const lido = alertasLidos.includes(a.id);
-              return(
-                <div key={a.id}
-                  onClick={()=>{setModal(a.row);setSinoAberto(false);}}
-                  style={{display:'flex',alignItems:'center',gap:12,padding:'10px 20px',cursor:'pointer',
-                    background:lido?'transparent':a.tipo==='sem_tratativa'?'rgba(251,191,36,0.04)':'rgba(239,68,68,0.05)',
-                    borderLeft:'3px solid '+(lido?'transparent':a.tipo==='sem_tratativa'?'#fbbf24':'#f87171'),
-                    transition:'background .1s', opacity:lido?.6:1}}
-                  onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.04)'}
-                  onMouseLeave={e=>e.currentTarget.style.background=lido?'transparent':a.tipo==='sem_tratativa'?'rgba(251,191,36,0.04)':'rgba(239,68,68,0.05)'}>
-                  <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:a.tipo==='sem_tratativa'?'rgba(251,191,36,0.15)':'rgba(239,68,68,0.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>
-                    {a.tipo==='sem_tratativa'?'⚠️':'🔴'}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}>
-                      <span style={{fontSize:13,fontWeight:600,color:'#fff',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.cliente}</span>
-                      {!lido&&<span style={{width:6,height:6,borderRadius:'50%',background:'#f87171',flexShrink:0,display:'block'}}/>}
-                    </div>
-                    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{a.detalhe}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.25)',marginTop:1}}>{(a.empresa||'').replace(/^\d+\.\s/,'')} &middot; {a.conta} &middot; {a.eventos.toLocaleString('pt-BR')} eventos</div>
-                  </div>
-                  <div style={{textAlign:'right',flexShrink:0}}>
-                    <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginBottom:4}}>{a.semana}</div>
-                    <span style={{fontSize:10,background:'rgba(167,139,250,0.1)',color:'#a78bfa',borderRadius:5,padding:'2px 7px',cursor:'pointer'}}>ver cliente →</span>
-                  </div>
-                </div>
-              );
-            })}
-
-            {alertasPiora.length>0&&(
-              <div style={{padding:'12px 20px 4px',fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.07em',fontWeight:600,borderTop:'1px solid rgba(255,255,255,0.05)',marginTop:4}}>
-                Outras pioras de categoria
-              </div>
-            )}
-            {alertasPiora.map((a,i)=>{
-              const lido = alertasLidos.includes(a.id);
-              return(
-                <div key={a.id}
-                  onClick={()=>{setModal(a.row);setSinoAberto(false);}}
-                  style={{display:'flex',alignItems:'center',gap:12,padding:'10px 20px',cursor:'pointer',
-                    background:lido?'transparent':'rgba(251,146,60,0.04)',
-                    borderLeft:'3px solid '+(lido?'transparent':'#fb923c'),
-                    transition:'background .1s', opacity:lido?.6:1}}
-                  onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,0.04)'}
-                  onMouseLeave={e=>e.currentTarget.style.background=lido?'transparent':'rgba(251,146,60,0.04)'}>
-                  <div style={{flexShrink:0,width:32,height:32,borderRadius:8,background:'rgba(251,146,60,0.15)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>
-                    📉
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:2}}>
-                      <span style={{fontSize:13,fontWeight:500,color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.cliente}</span>
-                      {!lido&&<span style={{width:6,height:6,borderRadius:'50%',background:'#fb923c',flexShrink:0,display:'block'}}/>}
-                    </div>
-                    <div style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{a.detalhe}</div>
-                    <div style={{fontSize:10,color:'rgba(255,255,255,0.25)',marginTop:1}}>{(a.empresa||'').replace(/^\d+\.\s/,'')} &middot; {a.conta}</div>
-                  </div>
-                  <div style={{textAlign:'right',flexShrink:0}}>
-                    <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginBottom:4}}>{a.semana}</div>
-                    <span style={{fontSize:10,background:'rgba(167,139,250,0.1)',color:'#a78bfa',borderRadius:5,padding:'2px 7px'}}>ver →</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div style={{padding:'10px 20px',borderTop:'1px solid rgba(255,255,255,0.06)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
-            <span style={{fontSize:11,color:'rgba(255,255,255,0.25)'}}>Alertas gerados ao importar a semana &middot; clique num alerta para abrir o cliente</span>
-            <button onClick={()=>{setTab('c');setEvof('pc');setSinoAberto(false);setPage(0);}}
-              style={{padding:'4px 12px',borderRadius:8,border:'1px solid rgba(239,68,68,0.3)',background:'rgba(239,68,68,0.08)',color:'#f87171',fontSize:11,cursor:'pointer',fontWeight:600}}>
-              Ver críticos na tabela ↓
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Cabeçalho */}
-      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:24,flexWrap:'wrap',gap:12}}>
-        <div>
-          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}>
-            <div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/>
-            <span style={{fontSize:20,fontWeight:700,color:'#fff',letterSpacing:'-0.3px'}}>An&#225;lise de Bases</span>
-          </div>
-          <div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>
-            Semana: <strong style={{color:'rgba(255,255,255,0.5)'}}>{w.label}</strong> &middot; {t.t.toLocaleString('pt-BR')} clientes &middot; clique num cliente para ver detalhes
-          </div>
-        </div>
-        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-          {weeks.map((wk,i)=>(
-            <button key={i} onClick={()=>{setCw(i);setTab('c');setPage(0);setSearch('');setEmpFil('');setEvof('');setSoloPI(false);}}
-              style={{padding:'5px 13px',borderRadius:20,border:'1px solid',fontSize:12,cursor:'pointer',
-                borderColor:i===cw?'#a78bfa':'rgba(255,255,255,0.1)',
-                background:i===cw?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',
-                color:i===cw?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:i===cw?700:400}}>
-              {wk.label}
-            </button>
-          ))}
-          {alertas.length>0&&(
-            <button onClick={()=>{setSinoAberto(v=>!v);if(!sinoAberto)marcarLidos();}}
-              style={{position:'relative',padding:'7px 12px',borderRadius:10,border:'1px solid',fontSize:12,cursor:'pointer',display:'flex',alignItems:'center',gap:6,
-                borderColor:alertasNaoLidos.length>0?'rgba(239,68,68,0.5)':'rgba(255,255,255,0.12)',
-                background:alertasNaoLidos.length>0?'rgba(239,68,68,0.1)':'rgba(255,255,255,0.04)',
-                color:alertasNaoLidos.length>0?'#f87171':'rgba(255,255,255,0.5)'}}>
-              &#128276;
-              {alertasNaoLidos.length>0&&<span style={{position:'absolute',top:-4,right:-4,background:'#f87171',color:'#fff',borderRadius:'50%',width:16,height:16,fontSize:9,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid #0d1424'}}>{alertasNaoLidos.length>9?'9+':alertasNaoLidos.length}</span>}
-              Alertas {alertas.length>0&&<span style={{background:'rgba(255,255,255,0.08)',borderRadius:99,padding:'1px 6px',fontSize:10,marginLeft:2}}>{alertas.length}</span>}
-            </button>
-          )}
-          <label style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(167,139,250,0.1)',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>
-            &#128229; Importar semana
-            <input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/>
-          </label>
-          {weeks.length>0&&<button onClick={limpar}
-            style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.07)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-            &#128465; Limpar
-          </button>}
-        </div>
-      </div>
-
-      {/* Cards totais */}
-      <div className="grid-4" style={{marginBottom:20}}>
-        {[
-          {l:'Total monitorado',v:t.t,s:w.label,c:'#a78bfa',bg:'rgba(167,139,250,0.07)',bc:'rgba(167,139,250,0.2)'},
-          {l:'Cr&#237;ticos',v:t.c,s:Math.round(t.c/t.t*100)+'% &middot; >10 eventos',c:'#f87171',bg:'rgba(239,68,68,0.07)',bc:'rgba(239,68,68,0.2)'},
-          {l:'Aten&#231;&#227;o',v:t.a,s:Math.round(t.a/t.t*100)+'% &middot; 6&#8211;10 eventos',c:'#fbbf24',bg:'rgba(251,191,36,0.07)',bc:'rgba(251,191,36,0.2)'},
-          {l:'Saud&#225;veis',v:t.s,s:Math.round(t.s/t.t*100)+'% &middot; 0&#8211;5 eventos',c:'#34d399',bg:'rgba(52,211,153,0.07)',bc:'rgba(52,211,153,0.2)'},
-        ].map((cd,i)=>{
-          const prev=hp?getTotals(weeks[cw-1].rows):null;
-          const pv=prev?[prev.t,prev.c,prev.a,prev.s][i]:null;
-          const d=pv!==null?cd.v-pv:null;
-          return(
-            <div key={i} style={{borderRadius:16,padding:'16px 20px',border:'1px solid '+cd.bc,background:cd.bg}}>
-              <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
-                <span style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'.06em'}} dangerouslySetInnerHTML={{__html:cd.l}}/>
-                <span style={{width:8,height:8,borderRadius:'50%',background:cd.c,display:'block',boxShadow:'0 0 6px '+cd.c}}/>
-              </div>
-              <div style={{fontSize:32,fontWeight:700,color:cd.c,lineHeight:1,letterSpacing:'-1px'}}>{cd.v.toLocaleString('pt-BR')}</div>
-              <div style={{fontSize:11,color:'rgba(255,255,255,0.25)',marginTop:6}} dangerouslySetInnerHTML={{__html:cd.s}}/>
-              {d!==null&&<div style={{marginTop:8,fontSize:11,color:d===0?'rgba(255,255,255,0.2)':d>0&&i>0&&i<3?'#f87171':d<0&&i>0&&i<3?'#34d399':'rgba(255,255,255,0.3)'}}>
-                {d===0?'igual':d>0?'\u2191 +'+d:'\u2193 '+d} vs semana ant.
-              </div>}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Gráfico + Comparativo */}
-      <div style={{display:'grid',gridTemplateColumns:'300px 1fr',gap:16,marginBottom:20}}>
-        <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:16,padding:'16px 20px'}}>
-          <div style={{fontSize:13,fontWeight:600,color:'#fff',marginBottom:14}}>{hp?'Comparativo de semanas':'Distribuição atual'}</div>
-          <div style={{position:'relative',height:200}}>
-            <canvas ref={chartRef} role="img" aria-label="Gráfico de distribuição de clientes"/>
-          </div>
-          {!hp&&(
-            <div style={{display:'flex',justifyContent:'center',gap:12,marginTop:12}}>
-              {[['Críticos','#f87171',t.c],['Atenção','#fbbf24',t.a],['Saudáveis','#34d399',t.s]].map(([l,c,v])=>(
-                <div key={l} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'rgba(255,255,255,0.45)'}}>
-                  <span style={{width:8,height:8,borderRadius:2,background:c,display:'block'}}/>{l} <strong style={{color:'#fff'}}>{v}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:16,padding:'16px 20px'}}>
-          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}>
-            <span style={{fontSize:13,fontWeight:600,color:'#fff'}}>Comparativo evolutivo</span>
-            {hp&&<span style={{fontSize:11,color:'rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'2px 8px'}}>{weeks[cw-1].label} &#8594; {w.label}</span>}
-          </div>
-          {!cmp?(
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:160,gap:8}}>
-              <div style={{fontSize:36,opacity:.12}}>&#128202;</div>
-              <div style={{fontSize:12,color:'rgba(255,255,255,0.2)',textAlign:'center',lineHeight:1.7}}>Importe a 2ª semana para<br/>ativar o comparativo automático</div>
-            </div>
-          ):(
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
-              <div style={{background:'rgba(255,255,255,0.03)',borderRadius:12,padding:'12px 14px'}}>
-                <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Varia&#231;&#227;o</div>
-                {[['Críticos',cmp.pp.c,cmp.cp.c,'#f87171'],['Atenção',cmp.pp.a,cmp.cp.a,'#fbbf24'],['Saudáveis',cmp.pp.s,cmp.cp.s,'#34d399'],['Total',cmp.pp.t,cmp.cp.t,'#a78bfa']].map(([l,p,c,cor])=>(
-                  <div key={l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-                    <span style={{fontSize:11,color:'rgba(255,255,255,0.4)',display:'flex',alignItems:'center',gap:4}}><span style={{width:5,height:5,borderRadius:'50%',background:cor,display:'block'}}/>{l}</span>
-                    <span style={{fontSize:11,fontWeight:600,color:'#fff'}}>{p} &#8594; {c} {dlt(c,p)}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.1)',borderRadius:12,padding:'12px 14px'}}>
-                <div style={{fontSize:10,color:'#f87171',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Negativos</div>
-                {[['Pioraram → crítico',cmp.mv.pc],['Pioraram → atenção',cmp.mv.pa],['Mantiveram crítico',cmp.mv.mc],['Mantiveram atenção',cmp.mv.ma]].map(([l,v])=>(
-                  <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-                    <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span>
-                    <span style={{fontSize:13,fontWeight:700,color:v>0?'#f87171':'rgba(255,255,255,0.2)'}}>{v}</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{background:'rgba(52,211,153,0.05)',border:'1px solid rgba(52,211,153,0.1)',borderRadius:12,padding:'12px 14px'}}>
-                <div style={{fontSize:10,color:'#34d399',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Positivos</div>
-                {[['Melhoraram → saudável',cmp.mv.mels],['Melhoraram → atenção',cmp.mv.mela],['Mantiveram saudável',cmp.mv.ms],['Novos clientes',cmp.mv.novo]].map(([l,v])=>(
-                  <div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}>
-                    <span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span>
-                    <span style={{fontSize:13,fontWeight:700,color:v>0?'#34d399':'rgba(255,255,255,0.2)'}}>{v}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Navegação principal: Lista | Migrações */}
-      {hp&&<div style={{display:'flex',gap:6,marginBottom:16}}>
-        <button onClick={()=>setAbaMain('lista')}
-          style={{padding:'7px 18px',borderRadius:10,border:'1px solid',fontSize:13,cursor:'pointer',fontWeight:abaMain==='lista'?700:400,
-            borderColor:abaMain==='lista'?'#a78bfa':'rgba(255,255,255,0.12)',
-            background:abaMain==='lista'?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',
-            color:abaMain==='lista'?'#a78bfa':'rgba(255,255,255,0.4)'}}>
-          Lista de clientes
-        </button>
-        <button onClick={()=>setAbaMain('migracoes')}
-          style={{padding:'7px 18px',borderRadius:10,border:'1px solid',fontSize:13,cursor:'pointer',fontWeight:abaMain==='migracoes'?700:400,
-            borderColor:abaMain==='migracoes'?'#fbbf24':'rgba(255,255,255,0.12)',
-            background:abaMain==='migracoes'?'rgba(251,191,36,0.12)':'rgba(255,255,255,0.04)',
-            color:abaMain==='migracoes'?'#fbbf24':'rgba(255,255,255,0.4)'}}>
-          Migrações {hp&&<span style={{background:'rgba(251,191,36,0.15)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{getMigracoes().length}</span>}
-        </button>
-      </div>}
-
-      {abaMain==='migracoes'&&hp&&(()=>{
-        const migs = getMigracoes();
-        const pioras  = migs.filter(m=>m.direcao==='piora');
-        const melhoras = migs.filter(m=>m.direcao==='melhora');
-        const clsLabel = k => k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
-        const clsColor = k => k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
-        return(
-          <div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:16}}>
-              <div style={{background:'rgba(239,68,68,0.06)',border:'1px solid rgba(239,68,68,0.2)',borderRadius:14,padding:'14px 18px'}}>
-                <div style={{fontSize:11,color:'#f87171',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Pioraram de categoria</div>
-                <div style={{fontSize:28,fontWeight:700,color:'#f87171'}}>{pioras.length}</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginTop:4}}>{weeks[cw-1].label} → {weeks[cw].label}</div>
-              </div>
-              <div style={{background:'rgba(52,211,153,0.06)',border:'1px solid rgba(52,211,153,0.2)',borderRadius:14,padding:'14px 18px'}}>
-                <div style={{fontSize:11,color:'#34d399',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Melhoraram de categoria</div>
-                <div style={{fontSize:28,fontWeight:700,color:'#34d399'}}>{melhoras.length}</div>
-                <div style={{fontSize:11,color:'rgba(255,255,255,0.3)',marginTop:4}}>{weeks[cw-1].label} → {weeks[cw].label}</div>
-              </div>
-            </div>
-            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
-              <div className="table-scroll">
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
-                  <colgroup><col style={{width:90}}/><col/><col style={{width:130}}/><col style={{width:80}}/><col style={{width:80}}/><col style={{width:85}}/><col style={{width:160}}/></colgroup>
-                  <thead>
-                    <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                      {['Conta','Cliente','Empresa','Evt ant.','Evt atu.','Direção','Migração'].map(h=>(
-                        <th key={h} style={{padding:'9px 12px',textAlign:h==='Evt ant.'||h==='Evt atu.'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.06em'}}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {migs.length===0&&<tr><td colSpan={7} style={{padding:24,textAlign:'center',color:'rgba(255,255,255,0.2)',fontSize:13}}>Nenhuma migração encontrada</td></tr>}
-                    {migs.map((m,i)=>(
-                      <tr key={i} onClick={()=>setModal({conta:m.conta,cliente:m.cliente,empresa:m.empresa,eventos:m.eventosAtu})}
-                        style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)',cursor:'pointer'}}
-                        onMouseEnter={e=>e.currentTarget.style.background='rgba(167,139,250,0.06)'}
-                        onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':'rgba(255,255,255,0.015)'}>
-                        <td style={{padding:'8px 12px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{m.conta}</td>
-                        <td style={{padding:'8px 12px',color:'rgba(255,255,255,0.85)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={m.cliente}>{m.cliente}</td>
-                        <td style={{padding:'8px 12px',fontSize:11,color:'rgba(255,255,255,0.35)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(m.empresa||'').replace(/^\d+\.\s/,'')}</td>
-                        <td style={{padding:'8px 12px',textAlign:'right',color:'rgba(255,255,255,0.4)',fontSize:12}}>{m.eventosAnt.toLocaleString('pt-BR')}</td>
-                        <td style={{padding:'8px 12px',textAlign:'right',fontWeight:700,color:'#fff'}}>{m.eventosAtu.toLocaleString('pt-BR')}</td>
-                        <td style={{padding:'8px 12px'}}>
-                          <span style={{background:m.direcao==='piora'?'rgba(239,68,68,0.15)':'rgba(52,211,153,0.15)',color:m.direcao==='piora'?'#f87171':'#34d399',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:600}}>
-                            {m.direcao==='piora'?'↓ Piorou':'↑ Melhorou'}
-                          </span>
-                        </td>
-                        <td style={{padding:'8px 12px'}}>
-                          <span style={{fontSize:11}}>
-                            <span style={{color:clsColor(m.classeAnt),fontWeight:600}}>{clsLabel(m.classeAnt)}</span>
-                            <span style={{color:'rgba(255,255,255,0.3)',margin:'0 4px'}}>→</span>
-                            <span style={{color:clsColor(m.classeAtu),fontWeight:600}}>{clsLabel(m.classeAtu)}</span>
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="pgn">
-                <span className="pgn-info">{migs.length} migração{migs.length!==1?'ões':''} encontrada{migs.length!==1?'s':''}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {abaMain==='lista'&&<React.Fragment>
-      {/* Tabs + portaria */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-        <div style={{display:'flex',gap:4}}>
-          {[['c','Críticos',t.c,'#f87171'],['a','Atenção',t.a,'#fbbf24'],['s','Saudáveis',t.s,'#34d399']].map(([k,l,n,c])=>(
-            <button key={k} onClick={()=>{setTab(k);setPage(0);}}
-              style={{background:'transparent',border:'none',padding:'8px 18px',fontSize:13,cursor:'pointer',
-                color:tab===k?c:'rgba(255,255,255,0.35)',fontWeight:tab===k?700:400,
-                borderBottom:'2px solid '+(tab===k?c:'transparent'),marginBottom:-1,transition:'all 0.15s'}}>
-              {l} <span style={{background:'rgba(255,255,255,0.05)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4,color:tab===k?c:'rgba(255,255,255,0.25)'}}>{n}</span>
-            </button>
-          ))}
-        </div>
-        <button onClick={()=>setSoloPI(p=>!p)}
-          style={{padding:'5px 14px',borderRadius:8,border:'1px solid',fontSize:12,cursor:'pointer',marginBottom:4,transition:'all 0.15s',
-            borderColor:soloPI?'#a78bfa':'rgba(255,255,255,0.12)',
-            background:soloPI?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',
-            color:soloPI?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:soloPI?700:400}}>
-          &#127970; Portaria Inteligente {soloPI?'&#183; ativo':''}
-        </button>
-      </div>
-
-      {/* Filtros */}
-      <div style={{display:'flex',gap:8,margin:'12px 0',flexWrap:'wrap'}}>
-        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="&#128269;  Buscar cliente ou conta..." style={{...inp,flex:1,minWidth:220}}/>
-        <select value={empFil} onChange={e=>{setEmpFil(e.target.value);setPage(0);}} style={inp}>
-          <option value="">Todas as empresas</option>
-          {empresas.map(em=><option key={em} value={em}>{em.replace(/^\d+\.\s/,'')}</option>)}
-        </select>
-        {hp&&(
-          <select value={evof} onChange={e=>{setEvof(e.target.value);setPage(0);}} style={inp}>
-            <option value="">Toda evolu&#231;&#227;o</option>
-            <option value="pc">Piorou &#8594; cr&#237;tico</option>
-            <option value="pa">Piorou &#8594; aten&#231;&#227;o</option>
-            <option value="mc">Manteve cr&#237;tico</option>
-            <option value="ma">Manteve aten&#231;&#227;o</option>
-            <option value="ms">Manteve saud&#225;vel</option>
-            <option value="mels">Melhorou &#8594; saud&#225;vel</option>
-            <option value="mela">Melhorou &#8594; aten&#231;&#227;o</option>
-            <option value="novo">Novo cliente</option>
-          </select>
-        )}
-      </div>
-
-      {/* Tabela */}
-      <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
-        <div className="table-scroll">
-          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13,tableLayout:'fixed'}}>
-            <colgroup>
-              <col style={{width:95}}/><col/><col style={{width:140}}/><col style={{width:90}}/>
-              {hp&&<col style={{width:82}}/>}
-              {hp&&<col style={{width:160}}/>}
-            </colgroup>
-            <thead>
-              <tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-                {['Conta','Cliente','Empresa','Eventos',...(hp?['Ant.','Evolução']:[])].map(h=>(
-                  <th key={h} style={{padding:'10px 14px',textAlign:h==='Eventos'||h==='Ant.'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.length===0&&<tr><td colSpan={hp?6:4} style={{padding:28,textAlign:'center',color:'rgba(255,255,255,0.15)',fontSize:13}}>Nenhum cliente encontrado</td></tr>}
-              {pageRows.map((r,i)=>{
-                const evo=hp?getEvo(r.conta,r.empresa,cw):null;
-                const pv=hp?prevRows.find(p=>(p.conta||'').toLowerCase().trim()===(r.conta||'').toLowerCase().trim()):null;
-                const isPI=(r.cliente||'').toUpperCase().includes('PORTARIA');
-                return(
-                  <tr key={i} onClick={()=>setModal(r)}
-                    style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)',cursor:'pointer',transition:'background 0.1s'}}
-                    onMouseEnter={e=>e.currentTarget.style.background='rgba(167,139,250,0.07)'}
-                    onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':'rgba(255,255,255,0.015)'}>
-                    <td style={{padding:'9px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{r.conta}</td>
-                    <td style={{padding:'9px 14px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}} title={r.cliente}>
-                      <span style={{color:'rgba(255,255,255,0.85)'}}>{r.cliente}</span>
-                      {isPI&&<span style={{marginLeft:6,background:'rgba(167,139,250,0.15)',color:'#a78bfa',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:600}}>PI</span>}
-                    </td>
-                    <td style={{padding:'9px 14px',fontSize:11,color:'rgba(255,255,255,0.3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
-                    <td style={{padding:'9px 14px',textAlign:'right',fontWeight:700,color:'#fff'}}>{r.eventos.toLocaleString('pt-BR')}</td>
-                    {hp&&<td style={{padding:'9px 14px',textAlign:'right',color:'rgba(255,255,255,0.25)'}}>{pv?pv.eventos.toLocaleString('pt-BR'):'—'}</td>}
-                    {hp&&<td style={{padding:'9px 14px'}}>{evo&&<span style={{...evBadge(evo.cls)}}>{evo.label}</span>}</td>}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        <div className="pgn">
-          <span className="pgn-info">{start+1}&#8211;{Math.min(start+PS,tabRows.length)} de {tabRows.length} clientes</span>
-          <button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>&#8592;</button>
-          {[...Array(Math.min(5,Math.ceil(tabRows.length/PS)))].map((_,i)=>{
-            const pg=Math.max(0,Math.min(page-2,Math.ceil(tabRows.length/PS)-5))+i;
-            return<button key={pg} className={'pgn-btn'+(page===pg?' on':'')} onClick={()=>setPage(pg)}>{pg+1}</button>;
-          })}
-          <button className="pgn-btn" disabled={start+PS>=tabRows.length} onClick={()=>setPage(p=>p+1)}>&#8594;</button>
-        </div>
-      </div>
-      </React.Fragment>}
-    </div>
-  );
-}
-
-
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -5987,7 +4128,7 @@ function App() {
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
-    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários","baseAtiva":"Base Ativa","analise":"Análise de Bases"};
+    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários"};
     document.title=`${nomes[aba]||"Dashboard"} — Central de Monitoramento VTR`;
   },[aba]);
 
@@ -6069,7 +4210,7 @@ function App() {
   useEffect(()=>{
     if(!usuario) return;
     const isAdminUser = usuario.perfil==="admin";
-    const abasDisponiveis = ["dashboard","portaria","filiais","mapa","comparativos","clientes","relatorios","baseAtiva","analise",...(isAdminUser?["importacao","usuarios"]:[])];
+    const abasDisponiveis = ["dashboard","portaria","filiais","mapa","comparativos","clientes","relatorios",...(isAdminUser?["importacao","usuarios"]:[])];
     const handler=(e)=>{
       // Não ativa se o foco está em input/textarea
       if(["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
@@ -6084,29 +4225,26 @@ function App() {
   },[usuario]);
 
   async function fetchAll(table,order,ascending=true){
-    const{count,error:cErr}=await supabaseClient.from(table).select('*',{count:'exact',head:true});
-    if(cErr) throw new Error('Erro ao contar '+table+': '+cErr.message);
-    const total=count||0;
-    if(total===0) return [];
-    console.log('[fetchAll] '+table+': '+total+' registros');
-    const PAGE=1000,GROUP=5;
-    const numPages=Math.ceil(total/PAGE);
-    let all=[];
-    for(let g=0;g<numPages;g+=GROUP){
-      const batch=[];
-      for(let p=g;p<Math.min(g+GROUP,numPages);p++){
-        const from=p*PAGE,to=Math.min(from+PAGE-1,total-1);
-        batch.push(supabaseClient.from(table).select('*').order(order,{ascending}).range(from,to));
+    let all=[],from=0;const PAGE=1000;const MAX=5000;
+    // Para dispatches: limita aos últimos 30 dias e máx 5000 registros
+    const filtroData = table==="dispatches"
+      ? new Date(Date.now() - 30*24*3600000).toISOString().slice(0,10)
+      : null;
+    while(true){
+      let q = supabaseClient.from(table).select("*").range(from,from+PAGE-1);
+      if(filtroData) {
+        q = q.order("created_at",{ascending:false}).gte("created_at", filtroData);
+      } else {
+        q = q.order(order,{ascending});
       }
-      const results=await Promise.all(batch);
-      for(const{data,error} of results){
-        if(error) throw new Error('Erro ao carregar '+table+': '+error.message);
-        if(data&&data.length) all=all.concat(data);
-      }
-      console.log('[fetchAll] '+table+': '+all.length+'/'+total);
-      if(g+GROUP<numPages) await new Promise(r=>setTimeout(r,100));
+      const{data,error}=await q;
+      if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
+      if(!data||data.length===0)break;
+      all=all.concat(data);
+      if(data.length<PAGE)break;
+      from+=PAGE;
+      if(all.length>=MAX)break;
     }
-    console.log('[fetchAll] '+table+' concluído: '+all.length);
     return all;
   }
 
@@ -6132,7 +4270,6 @@ function App() {
       if(!raw)return null;
       const{ts,cls,dis}=JSON.parse(raw);
       if(Date.now()-ts>CACHE_TTL)return null;
-      if(!dis||dis.length===0)return null;
       return{cls,dis};
     }catch{return null;}
   }
@@ -6158,23 +4295,7 @@ function App() {
       const dis=await fetchAll("dispatches","data_hora",false);
       setLoadingMsg("Processando dados…");
       salvarCache(cls,dis);
-      // Enriquecer clients com dados da Base Ativa quando nome está vazio
-      let baseAtiva=[];
-      try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
-      const baseMap={};
-      baseAtiva.forEach(b=>{baseMap[(b.conta||'').trim().toLowerCase()]=b;});
-      const clsNorm=(cls||[]).map(c=>{
-        const norm={...c,filial_original:c.filial,filial:limparEmpresa(c.filial)};
-        const ba=baseMap[(c.codigo_cliente||'').trim().toLowerCase()];
-        if(ba){
-          if(!norm.nome_cliente||norm.nome_cliente===norm.codigo_cliente) norm.nome_cliente=ba.cliente;
-          if(!norm.cidade) norm.cidade=ba.cidade;
-          if(!norm.bairro) norm.bairro=ba.bairro;
-          if(!norm.area)   norm.area=ba.area;
-          if(!norm.mensalidade) norm.mensalidade=ba.mensalidade;
-        }
-        return norm;
-      });
+      const clsNorm=(cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
       const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
       setClients(clsNorm);setDispatches(disNorm);
     }catch(e){
@@ -6235,8 +4356,29 @@ function App() {
       for(const d of sanitized){if(!d.portaria_inteligente&&d.codigo_cliente&&d.filial){const key=`${d.codigo_cliente}||${d.filial}`;if(!clientesExistentes.has(key)&&!novosClientesMap[key]){const nomeFallback=(d.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim()||d.codigo_cliente;novosClientesMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nomeFallback,filial:d.filial,mensalidade:0,status:"ativo"};}}}
       const novosClientes=Object.values(novosClientesMap);
       if(novosClientes.length>0){for(let i=0;i<novosClientes.length;i+=500)await supabaseClient.from("clients").upsert(novosClientes.slice(i,i+500),{onConflict:"codigo_cliente,filial"});}
-      const existentesSet=new Set();let fromDesl=0;
-      while(true){const{data:existentes}=await supabaseClient.from("dispatches").select("codigo_cliente,filial,data_hora,evento,viatura").range(fromDesl,fromDesl+999);if(!existentes||existentes.length===0)break;for(const e of existentes)existentesSet.add(`${e.codigo_cliente}||${e.filial}||${e.data_hora}||${e.evento}||${e.viatura}`);if(existentes.length<1000)break;fromDesl+=1000;}
+      // Dedup: busca só os dispatches do mesmo período do arquivo (evita timeout)
+      const datasNoArquivo = sanitized.map(d=>d.data_hora).filter(Boolean);
+      // Extrai meses únicos do arquivo para limitar a busca
+      const mesesArquivo = [...new Set(datasNoArquivo.map(dh=>{
+        try{ const p=dh.split(", ")[0].split("/"); return `${p[2]}-${p[1].padStart(2,"0")}`; }catch{ return null; }
+      }).filter(Boolean))];
+      const existentesSet=new Set();
+      for(const mk of mesesArquivo){
+        const [ano,mes] = mk.split("-");
+        // Busca registros desse mês específico pelo campo data_hora (formato DD/MM/YYYY)
+        const prefixo1 = `01/${mes}/${ano}`; // início do mês
+        let fromDesl=0;
+        while(true){
+          const{data:existentes}=await supabaseClient.from("dispatches")
+            .select("codigo_cliente,filial,data_hora,evento,viatura")
+            .like("data_hora", `%/${mes}/${ano}%`)
+            .range(fromDesl,fromDesl+999);
+          if(!existentes||existentes.length===0)break;
+          for(const e of existentes)existentesSet.add(`${e.codigo_cliente}||${e.filial}||${e.data_hora}||${e.evento}||${e.viatura}`);
+          if(existentes.length<1000)break;
+          fromDesl+=1000;
+        }
+      }
       const novos=sanitized.filter(d=>!existentesSet.has(`${d.codigo_cliente}||${d.filial}||${String(d.data_hora||"")}||${d.evento}||${d.viatura}`));
       const duplicados=sanitized.length-novos.length;
       let totalInserido=0;
@@ -6379,8 +4521,6 @@ function App() {
         <TabBtn active={aba==="relatorios"} onClick={()=>setAba("relatorios")} accent="#fb923c">📋 Relatórios{aba==="relatorios"&&mesBadge}</TabBtn>
         {isAdmin&&<TabBtn active={aba==="importacao"} onClick={()=>setAba("importacao")}>📥 Importação{clients.length>0&&<span style={{ marginLeft:6,background:"rgba(56,189,248,0.2)",color:"#38bdf8",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{clients.length}</span>}</TabBtn>}
         {isAdmin&&<TabBtn active={aba==="usuarios"} onClick={()=>setAba("usuarios")} accent="#f87171">👑 Usuários</TabBtn>}
-        <TabBtn active={aba==="baseAtiva"} onClick={()=>setAba("baseAtiva")} accent="#06b6d4">🗂️ Base Ativa</TabBtn>
-        <TabBtn active={aba==="analise"} onClick={()=>setAba("analise")} accent="#a78bfa">📈 Análise de Bases</TabBtn>
         {/* indicador global quando mês filtrado */}
         {mesFiltroGlobal!=="Todos"&&(
           <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:8,padding:"5px 12px",borderRadius:99,background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.2)",fontSize:11,color:"#38bdf8",fontWeight:600 }}>
@@ -6489,8 +4629,6 @@ function App() {
         </div>
       )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
-      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} dispatches={dispatches} clients={clients} />}
-      {aba==="analise"&&<AnaliseBases supabaseClient={supabaseClient} dispatches={dispatches} />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
         Custo por deslocamento: R$ {CUSTO_FISCAL} · Dados em nuvem · Portaria Inteligente separada automaticamente
