@@ -4184,7 +4184,7 @@ async function sbCarregarTratativas(sb,conta,empresa) {
 }
 
 
-function BaseAtivaTab({supabaseClient}) {
+function BaseAtivaTab({supabaseClient, onRefresh}) {
   const [baseRows,setBaseRows]=React.useState(()=>{try{return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{return[];}});
   const [search,setSearch]=React.useState('');const [page,setPage]=React.useState(0);const [msg,setMsg]=React.useState('');const [sbStatus,setSbStatus]=React.useState('');const PS=20;
   const [editando,setEditando]=React.useState(null); // linha sendo editada
@@ -4203,7 +4203,25 @@ function BaseAtivaTab({supabaseClient}) {
     const novaBase=[...baseRows];novaBase[idx]=atualizado;
     setEditando(null);
     await saveBase(novaBase);
-    setMsg('ok:Cliente atualizado!');setTimeout(()=>setMsg(''),3000);
+    // Sincronizar com a tabela clients (por codigo_cliente = conta)
+    if(supabaseClient&&window._supabaseReady){
+      const payload={};
+      if(editForm.cidade) payload.cidade=editForm.cidade;
+      if(editForm.bairro) payload.bairro=editForm.bairro;
+      if(editForm.area)   payload.area=editForm.area;
+      if(editForm.mensalidade){
+        const mens=parseFloat(String(editForm.mensalidade).replace(',','.'));
+        if(!isNaN(mens)&&mens>0) payload.mensalidade=mens;
+      }
+      if(Object.keys(payload).length>0){
+        await supabaseClient.from('clients')
+          .update(payload)
+          .eq('codigo_cliente', editando.conta);
+        try{localStorage.removeItem('vtr_dados_cache');}catch{}
+        if(typeof onRefresh==='function') onRefresh(true);
+      }
+    }
+    setMsg('ok:Cliente atualizado na Base Ativa e em Clientes!');setTimeout(()=>setMsg(''),4000);
   };
   const handleImport=(e)=>{
     const file=e.target.files[0];if(!file)return;const reader=new FileReader();
@@ -5144,7 +5162,7 @@ function App() {
         </div>
       )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
-      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} />}
+      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} onRefresh={carregarDados} />}
       {aba==="analise"&&<AnaliseBases supabaseClient={supabaseClient} dispatches={dispatches} />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
