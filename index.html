@@ -168,7 +168,7 @@ const obsCache = new Map();
 //         4=IN_PLACE, 7=IN_PLACE_DONE
 // ═══════════════════════════════════════════════════════════════
 const SEGWARE_API    = "/api/segware";
-const SEGWARE_STATUS = [4]; // Apenas IN_PLACE — VTR saiu E chegou no local
+const SEGWARE_STATUS = [4];
 const SEG_CACHE_KEY  = "vtr_segware_ultima_sync";
 
 function getSegwareToken() { return (window._SEGWARE_TOKEN || "").trim(); }
@@ -243,15 +243,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
       }
     }
     if (todos.length === 0) return { novos:0, total:0, erro:null };
-    // Filtrar apenas status IN_PLACE (4) — deslocamento confirmado no local
-    const filtrados = todos.filter(ev => {
-      const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
-      const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
-      const cod = Number(ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0));
-      return SEGWARE_STATUS.includes(cod);
-    });
-    if (filtrados.length === 0) return { novos:0, total:todos.length, filtrados:0, erro:null };
-    const dispatches = filtrados.map(ev => segwareToDispatch(ev, filialPadrao));
+    const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
     // Buscar só dispatches do mesmo período para deduplicar (muito mais rápido)
     const dataInicioStr = inicio.toISOString();
     const { data:ex } = await supabase.from("dispatches")
@@ -269,7 +261,7 @@ async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
       }
     }
     try { localStorage.setItem(SEG_CACHE_KEY, new Date().toISOString()); } catch {}
-    return { novos:novos.length, total:todos.length, filtrados:filtrados.length, erro:null };
+    return { novos:novos.length, total:todos.length, erro:null };
   } catch(e) { return { novos:0, erro:e.message }; }
 }
 
@@ -3175,7 +3167,6 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
   const [limpando, setLimpando] = React.useState(false);
   const [msgLimpeza, setMsgLimpeza] = React.useState("");
 
-  // Meses disponíveis no banco (extraídos dos dispatches)
   const mesesNoBanco = React.useMemo(() => {
     const set = new Set();
     dispatches.forEach(d => {
@@ -3191,43 +3182,32 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
   async function limparMes() {
     if(!limparMesSel) return;
     const [ano, mes] = limparMesSel.split("-");
-    const confirmMsg = `Tem certeza que deseja apagar TODOS os deslocamentos de ${monthLabel(limparMesSel)}? Esta ação não pode ser desfeita.`;
-    if(!window.confirm(confirmMsg)) return;
+    if(!window.confirm(`Apagar TODOS os deslocamentos de ${monthLabel(limparMesSel)}? Esta ação não pode ser desfeita.`)) return;
     setLimpando(true); setMsgLimpeza("");
     try {
-      // Busca IDs do mês selecionado
       const idsParaDeletar = dispatches
         .filter(d => {
           if(!d.data_hora) return false;
           try {
             const partes = d.data_hora.split(", ")[0].split("/");
-            const mk = `${partes[2]}-${partes[1].padStart(2,"0")}`;
-            return mk === limparMesSel;
+            return `${partes[2]}-${partes[1].padStart(2,"0")}` === limparMesSel;
           } catch { return false; }
         })
-        .map(d => d.id)
-        .filter(Boolean);
+        .map(d => d.id).filter(Boolean);
       if(idsParaDeletar.length === 0){ setMsgLimpeza("❌ Nenhum registro encontrado para esse mês."); setLimpando(false); return; }
-      // Deleta em lotes de 500
       for(let i = 0; i < idsParaDeletar.length; i += 500) {
-        const lote = idsParaDeletar.slice(i, i+500);
-        const { error } = await supabaseClient.from("dispatches").delete().in("id", lote);
+        const { error } = await supabaseClient.from("dispatches").delete().in("id", idsParaDeletar.slice(i,i+500));
         if(error) throw new Error(error.message);
       }
-      setMsgLimpeza(`✅ ${idsParaDeletar.length} registros de ${monthLabel(limparMesSel)} removidos com sucesso!`);
+      setMsgLimpeza(`✅ ${idsParaDeletar.length} registros de ${monthLabel(limparMesSel)} removidos!`);
       setLimparMesSel("");
       try { localStorage.removeItem("vtr_dados_cache"); } catch {}
       if(typeof onRefresh === "function") onRefresh();
-    } catch(e) {
-      setMsgLimpeza("❌ Erro: " + e.message);
-    }
+    } catch(e) { setMsgLimpeza("❌ Erro: " + e.message); }
     setLimpando(false);
   }
 
-  function confirmDispatches(){
-    onImportDispatches(dispatchPreview.rows);
-    setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";
-  }
+  function confirmDispatches(){onImportDispatches(dispatchPreview.rows);setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}
   const card={borderRadius:16,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",padding:24,marginBottom:20};
 
   return(
@@ -3249,37 +3229,22 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         ))}
       </div>
-      {/* Painel de limpeza por mês */}
       {dispatches.length > 0 && (
         <div style={{ borderRadius:16,border:"1px solid rgba(239,68,68,0.2)",background:"rgba(239,68,68,0.04)",padding:20,marginBottom:20 }}>
           <SectionLabel>🗑️ Limpar Deslocamentos por Mês</SectionLabel>
-          <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14 }}>
-            Remove todos os deslocamentos de um mês específico do banco — útil antes de reimportar um período corrigido.
-          </div>
+          <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14 }}>Remove todos os deslocamentos de um mês específico — útil antes de reimportar um período corrigido.</div>
           <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
-            <select
-              value={limparMesSel}
-              onChange={e => setLimparMesSel(e.target.value)}
-              style={{ flex:1,minWidth:180,padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none" }}
-            >
+            <select value={limparMesSel} onChange={e=>setLimparMesSel(e.target.value)}
+              style={{ flex:1,minWidth:180,padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none" }}>
               <option value="">— Selecione o mês —</option>
-              {mesesNoBanco.map(mk => (
-                <option key={mk} value={mk}>{monthLabel(mk)}</option>
-              ))}
+              {mesesNoBanco.map(mk=><option key={mk} value={mk}>{monthLabel(mk)}</option>)}
             </select>
-            <button
-              onClick={limparMes}
-              disabled={!limparMesSel || limpando}
-              style={{ padding:"10px 20px",borderRadius:10,border:"none",background:limparMesSel?"#ef4444":"rgba(239,68,68,0.2)",color:limparMesSel?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:13,cursor:limparMesSel?"pointer":"not-allowed",whiteSpace:"nowrap",opacity:limpando?0.6:1 }}
-            >
-              {limpando ? "Removendo…" : "🗑️ Limpar mês selecionado"}
+            <button onClick={limparMes} disabled={!limparMesSel||limpando}
+              style={{ padding:"10px 20px",borderRadius:10,border:"none",background:limparMesSel?"#ef4444":"rgba(239,68,68,0.2)",color:limparMesSel?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:13,cursor:limparMesSel?"pointer":"not-allowed",opacity:limpando?0.6:1 }}>
+              {limpando?"Removendo…":"🗑️ Limpar mês selecionado"}
             </button>
           </div>
-          {msgLimpeza && (
-            <div style={{ marginTop:10,padding:"8px 14px",borderRadius:9,background:msgLimpeza.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(239,68,68,0.1)",border:msgLimpeza.startsWith("✅")?"1px solid rgba(52,211,153,0.3)":"1px solid rgba(239,68,68,0.3)",color:msgLimpeza.startsWith("✅")?"#34d399":"#f87171",fontSize:12,fontWeight:600 }}>
-              {msgLimpeza}
-            </div>
-          )}
+          {msgLimpeza&&<div style={{ marginTop:10,padding:"8px 14px",borderRadius:9,background:msgLimpeza.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(239,68,68,0.1)",color:msgLimpeza.startsWith("✅")?"#34d399":"#f87171",fontSize:12,fontWeight:600 }}>{msgLimpeza}</div>}
         </div>
       )}
       <div style={card}>
@@ -3353,7 +3318,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
               </table>
             </div>
             <div style={{ display:"flex",gap:10,marginTop:14 }}>
-              <button onClick={confirmDispatches} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:"#818cf8",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>✅ Adicionar — {dispatchPreview.rows.length} registros ao banco</button>
+              <button onClick={confirmDispatches} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:Object.keys(dispatchPreview.mesesJaImportados||{}).length>0?"#fb923c":"#818cf8",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>{Object.keys(dispatchPreview.mesesJaImportados||{}).length>0?"⚠️ Importar mesmo assim":"✅ Adicionar"} — {dispatchPreview.rows.length} registros ao banco</button>
               <button onClick={()=>{setDispatchPreview(null);setDispatchFileName("");if(dispatchRef.current)dispatchRef.current.value="";}} style={{ padding:"10px 16px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer" }}>Cancelar</button>
             </div>
           </div>
@@ -4108,6 +4073,544 @@ class ErrorBoundary extends React.Component {
 }
 
 
+
+// ════════════════════════════════════════════════════
+//  SUPABASE — helpers para Base Ativa e Semanas
+// ════════════════════════════════════════════════════
+async function sbSalvarBaseAtiva(sb, rows) {
+  if(!sb||!window._supabaseReady) return {ok:false,salvos:0};
+  const seen=new Map();
+  for(const r of rows){const key=(r.conta||'').trim().toLowerCase()+'||'+(r.empresa||'').trim().toLowerCase();seen.set(key,r);}
+  const unique=Array.from(seen.values());
+  const{error:delErr}=await sb.from('analise_base_ativa').delete().neq('id','00000000-0000-0000-0000-000000000000');
+  if(delErr)console.warn('[sbSalvar] Erro ao limpar:',delErr.message);
+  const BATCH=200;let salvos=0,erros=0;
+  for(let i=0;i<unique.length;i+=BATCH){
+    const lote=unique.slice(i,i+BATCH).map(r=>({empresa:(r.empresa||'').trim(),conta:(r.conta||'').trim(),cliente:(r.cliente||'').trim(),mensalidade:(r.mensalidade||'').trim(),status:(r.status||'Ativo').trim(),area:(r.area||'').trim(),cidade:(r.cidade||'').trim(),bairro:(r.bairro||'').trim()}));
+    const{error}=await sb.from('analise_base_ativa').insert(lote);
+    if(error){console.warn('[sbSalvar] Erro lote',i,':',error.message);erros+=lote.length;}
+    else salvos+=lote.length;
+    if(i+BATCH<unique.length)await new Promise(r=>setTimeout(r,80));
+  }
+  return{ok:erros===0,salvos,erros};
+}
+
+async function sbCarregarBaseAtiva(sb) {
+  if(!sb||!window._supabaseReady) return null;
+  try{
+    const{count,error:cErr}=await sb.from('analise_base_ativa').select('*',{count:'exact',head:true});
+    if(cErr)throw cErr;
+    const total=count||0;
+    if(total===0)return[];
+    const PAGE=1000;let all=[];
+    for(let from=0;from<total;from+=PAGE){
+      const{data,error}=await sb.from('analise_base_ativa').select('id,empresa,conta,cliente,mensalidade,status,area,cidade,bairro').order('id',{ascending:true}).range(from,Math.min(from+PAGE-1,total-1));
+      if(error)throw error;
+      if(data&&data.length>0)all=all.concat(data);
+      if(from+PAGE<total)await new Promise(r=>setTimeout(r,80));
+    }
+    return all;
+  }catch(e){console.warn('sbCarregarBaseAtiva:',e.message);return null;}
+}
+
+async function sbLimparBaseAtiva(sb) {
+  if(!sb||!window._supabaseReady)return false;
+  try{const{error}=await sb.from('analise_base_ativa').delete().neq('id','00000000-0000-0000-0000-000000000000');if(error)throw error;return true;}
+  catch(e){console.warn('sbLimparBaseAtiva:',e.message);return false;}
+}
+
+async function sbSalvarSemana(sb,label,rows) {
+  if(!sb||!window._supabaseReady)return false;
+  try{
+    const seen=new Map();
+    for(const r of rows){const key=(r.conta||'').trim().toLowerCase()+'||'+(r.empresa||'').trim().toLowerCase();seen.set(key,r);}
+    const unique=Array.from(seen.values());
+    await sb.from('analise_semanas').upsert({label},{onConflict:'label',ignoreDuplicates:true});
+    await sb.from('analise_semana_clientes').delete().eq('semana_label',label);
+    const BATCH=100;let salvos=0;
+    for(let i=0;i<unique.length;i+=BATCH){
+      const lote=unique.slice(i,i+BATCH).map(r=>({semana_label:label,empresa:(r.empresa||'').trim(),conta:(r.conta||'').trim(),cliente:(r.cliente||'').trim(),eventos:parseInt(r.eventos)||0}));
+      const{error}=await sb.from('analise_semana_clientes').insert(lote);
+      if(error)console.warn('[sbSemana] Erro lote',i,error.message);
+      else salvos+=lote.length;
+      if(i+BATCH<unique.length)await new Promise(r=>setTimeout(r,80));
+    }
+    return true;
+  }catch(e){console.warn('sbSalvarSemana:',e.message);return false;}
+}
+
+async function sbCarregarSemanas(sb) {
+  if(!sb||!window._supabaseReady)return null;
+  try{
+    const{data:semanas,error:e1}=await sb.from('analise_semanas').select('label').order('importado_em',{ascending:true});
+    if(e1)throw e1;
+    if(!semanas||!semanas.length)return[];
+    const{count,error:cErr}=await sb.from('analise_semana_clientes').select('*',{count:'exact',head:true});
+    if(cErr)throw cErr;
+    const total=count||0;
+    const PAGE=1000;let clientes=[];
+    for(let from=0;from<total;from+=PAGE){
+      const{data:lote,error:e2}=await sb.from('analise_semana_clientes').select('semana_label,empresa,conta,cliente,eventos').range(from,Math.min(from+PAGE-1,total-1));
+      if(e2)throw e2;
+      if(lote)clientes=clientes.concat(lote);
+      if(from+PAGE<total)await new Promise(r=>setTimeout(r,80));
+    }
+    return semanas.map(s=>({label:s.label,rows:clientes.filter(c=>c.semana_label===s.label).map(c=>({empresa:c.empresa,conta:c.conta,cliente:c.cliente,eventos:parseInt(c.eventos)||0}))}));
+  }catch(e){console.warn('sbCarregarSemanas:',e.message);return null;}
+}
+
+async function sbLimparSemanas(sb) {
+  if(!sb||!window._supabaseReady)return false;
+  try{
+    await sb.from('analise_semana_clientes').delete().neq('id','00000000-0000-0000-0000-000000000000');
+    await sb.from('analise_semanas').delete().neq('id','00000000-0000-0000-0000-000000000000');
+    return true;
+  }catch(e){console.warn('sbLimparSemanas:',e.message);return false;}
+}
+
+async function sbSalvarTratativa(sb,nota) {
+  if(!sb||!window._supabaseReady)return false;
+  try{const{error}=await sb.from('analise_tratativas').insert([nota]);if(error)throw error;return true;}
+  catch(e){console.warn('sbSalvarTratativa:',e.message);return false;}
+}
+
+async function sbCarregarTratativas(sb,conta,empresa) {
+  if(!sb||!window._supabaseReady)return null;
+  try{
+    const{data,error}=await sb.from('analise_tratativas').select('*').eq('conta',conta).eq('empresa',empresa).order('criado_em',{ascending:false});
+    if(error)throw error;
+    return data||[];
+  }catch(e){console.warn('sbCarregarTratativas:',e.message);return null;}
+}
+
+
+function BaseAtivaTab({supabaseClient}) {
+  const [baseRows,setBaseRows]=React.useState(()=>{try{return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{return[];}});
+  const [search,setSearch]=React.useState('');const [page,setPage]=React.useState(0);const [msg,setMsg]=React.useState('');const [sbStatus,setSbStatus]=React.useState('');const PS=20;
+  const saveBase=async(rows)=>{
+    setBaseRows(rows);try{localStorage.setItem('vtr_base_ativa',JSON.stringify(rows));}catch{}
+    if(rows.length>0){setSbStatus('saving');const result=await sbSalvarBaseAtiva(supabaseClient,rows);const salvos=result?.salvos??0;setSbStatus(salvos>0?'ok:'+salvos:'local');setTimeout(()=>setSbStatus(''),5000);}
+    else{setSbStatus('clearing');await sbLimparBaseAtiva(supabaseClient);setSbStatus('');}
+  };
+  React.useEffect(()=>{(async()=>{setSbStatus('loading');const dados=await sbCarregarBaseAtiva(supabaseClient);if(dados&&dados.length>0){setBaseRows(dados);try{localStorage.setItem('vtr_base_ativa',JSON.stringify(dados));}catch{}setSbStatus('loaded:'+dados.length);setTimeout(()=>setSbStatus(''),4000);}else setSbStatus('');})();},[supabaseClient]);
+  const handleImport=(e)=>{
+    const file=e.target.files[0];if(!file)return;const reader=new FileReader();
+    reader.onload=(ev)=>{try{const wb=XLSX.read(ev.target.result,{type:'array'});const rows=[];
+      wb.SheetNames.forEach(name=>{const ws=wb.Sheets[name];const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        let sr=0,colMap={empresa:0,conta:1,cliente:2,mensalidade:3,status:4,area:5,cidade:-1,bairro:-1};
+        for(let i=0;i<Math.min(5,data.length);i++){const v=data[i].map((x,idx)=>({val:String(x||'').toLowerCase(),idx}));
+          if(v.some(x=>x.val.includes('empresa')||x.val.includes('conta')||x.val.includes('fantasia'))){sr=i+1;
+            v.forEach(({val,idx})=>{if(val.includes('empresa'))colMap.empresa=idx;else if(val.includes('conta'))colMap.conta=idx;else if(val.includes('fantasia')||val.includes('cliente'))colMap.cliente=idx;else if(val.includes('mensalidade'))colMap.mensalidade=idx;else if(val.includes('status'))colMap.status=idx;else if(val.includes('area')||val.includes('área'))colMap.area=idx;else if(val.includes('cidade'))colMap.cidade=idx;else if(val.includes('bairro'))colMap.bairro=idx;});break;}}
+        for(let i=sr;i<data.length;i++){const r=data[i];const emp=String(r[colMap.empresa]||'').trim();const cont=String(r[colMap.conta]||'').trim();const cli=String(r[colMap.cliente]||'').trim();
+          if(emp&&cont&&cli)rows.push({empresa:emp,conta:cont,cliente:cli,mensalidade:String(r[colMap.mensalidade]||'').trim(),status:String(r[colMap.status]||'Ativo').trim(),area:String(r[colMap.area]||'').trim(),cidade:colMap.cidade>=0?String(r[colMap.cidade]||'').trim():'',bairro:colMap.bairro>=0?String(r[colMap.bairro]||'').trim():''});}});
+      if(!rows.length){setMsg('err:Nenhum dado encontrado');return;}
+      saveBase(rows);setMsg('ok:'+rows.length+' clientes importados!');setPage(0);setSearch('');setTimeout(()=>setMsg(''),4000);
+    }catch(err){setMsg('err:'+err.message);}};
+    reader.readAsArrayBuffer(file);e.target.value='';
+  };
+  const filtered=baseRows.filter(r=>{if(!search)return true;const q=search.toLowerCase();return(r.cliente||'').toLowerCase().includes(q)||(r.conta||'').toLowerCase().includes(q)||(r.empresa||'').toLowerCase().includes(q);});
+  const total=filtered.length,start=page*PS,pageRows=filtered.slice(start,start+PS);
+  const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
+  const isOk=msg.startsWith('ok:');const msgText=msg.replace(/^(ok|err):/,'');
+  return(
+    <div style={{animation:'fadeUp 0.3s ease'}}>
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:24,flexWrap:'wrap',gap:12}}>
+        <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}><div style={{width:8,height:8,borderRadius:'50%',background:'#06b6d4',boxShadow:'0 0 8px #06b6d4'}}/><span style={{fontSize:20,fontWeight:700,color:'#fff'}}>Base Ativa</span></div><div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Cadastro de clientes ativos · vincula mensalidade e área na Análise de Bases</div></div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          <label style={{padding:'7px 16px',borderRadius:10,border:'1px solid rgba(6,182,212,0.5)',background:'rgba(6,182,212,0.1)',color:'#06b6d4',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:7}}>📥 Importar base (.xlsx)<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleImport}/></label>
+          {baseRows.length>0&&<button onClick={()=>{if(window.confirm('Limpar toda a base ativa?'))saveBase([]);}} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.4)',background:'rgba(239,68,68,0.08)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>🗑 Limpar</button>}
+        </div>
+      </div>
+      {msg&&<div style={{marginBottom:16,padding:'10px 16px',borderRadius:10,background:isOk?'rgba(52,211,153,0.08)':'rgba(239,68,68,0.08)',border:'1px solid '+(isOk?'rgba(52,211,153,0.2)':'rgba(239,68,68,0.2)'),fontSize:13,color:isOk?'#34d399':'#f87171'}}>{isOk?'✅ ':''}{msgText}</div>}
+      {sbStatus&&<div style={{marginBottom:12,padding:'8px 14px',borderRadius:10,fontSize:12,color:sbStatus.startsWith('ok')||sbStatus.startsWith('loaded')?'#34d399':sbStatus==='loading'?'#38bdf8':'#fbbf24'}}>{sbStatus==='loading'?'Carregando do Supabase...':sbStatus==='saving'?'Salvando...':sbStatus.startsWith('loaded:')?'✅ Carregados '+sbStatus.split(':')[1]+' clientes':sbStatus.startsWith('ok')?'✅ Salvo no Supabase':'Salvo localmente'}</div>}
+      {baseRows.length===0?(<div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:16,padding:'56px 24px',textAlign:'center'}}><div style={{fontSize:44,marginBottom:14,opacity:.15}}>🗂</div><div style={{fontSize:15,fontWeight:600,color:'rgba(255,255,255,0.3)',marginBottom:8}}>Nenhuma base importada</div><div style={{fontSize:12,color:'rgba(255,255,255,0.18)',lineHeight:1.8}}>Importe um .xlsx com: <code style={{color:'rgba(6,182,212,0.7)',fontSize:11}}>Empresa · Conta · Cliente · Mensalidade · Status · Área · Cidade · Bairro</code></div></div>):(
+      <React.Fragment>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
+          {[['Total',baseRows.length,'#06b6d4'],['Ativos',baseRows.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],['Com mensalidade',baseRows.filter(r=>r.mensalidade&&r.mensalidade!=='0'&&r.mensalidade!=='').length,'#fbbf24'],['Portaria',baseRows.filter(r=>(r.cliente||'').toUpperCase().includes('PORTARIA')).length,'#a78bfa']].map(([l,v,c])=>(
+            <div key={l} style={{borderRadius:14,padding:'14px 18px',border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.03)'}}><div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',marginBottom:6}}>{l}</div><div style={{fontSize:28,fontWeight:700,color:c}}>{v.toLocaleString('pt-BR')}</div></div>
+          ))}
+        </div>
+        <div style={{marginBottom:12}}><input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="🔍 Buscar cliente, conta ou empresa..." style={{...inp,width:'100%',maxWidth:440}}/></div>
+        <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
+          <div className="table-scroll">
+            <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+              <thead><tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>{['Conta','Cliente','Empresa','Mensalidade','Status','Área','Cidade','Bairro'].map(h=>(<th key={h} style={{padding:'10px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase'}}>{h}</th>))}</tr></thead>
+              <tbody>{pageRows.map((r,i)=>(<tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)'}}><td style={{padding:'8px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{r.conta}</td><td style={{padding:'8px 14px',color:'rgba(255,255,255,0.85)'}}>{r.cliente}</td><td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td><td style={{padding:'8px 14px',fontSize:12,color:r.mensalidade?'#34d399':'rgba(255,255,255,0.2)'}}>{r.mensalidade||'—'}</td><td style={{padding:'8px 14px'}}><span style={{background:(r.status||'').toLowerCase().includes('ativo')?'rgba(52,211,153,0.15)':'rgba(255,255,255,0.06)',color:(r.status||'').toLowerCase().includes('ativo')?'#6ee7b7':'rgba(255,255,255,0.35)',borderRadius:6,padding:'2px 8px',fontSize:11,fontWeight:600}}>{r.status||'—'}</span></td><td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.area||'—'}</td><td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.5)'}}>{r.cidade||'—'}</td><td style={{padding:'8px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.bairro||'—'}</td></tr>))}</tbody>
+            </table>
+          </div>
+          <div className="pgn"><span className="pgn-info">{start+1}–{Math.min(start+PS,total)} de {total}</span><button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>←</button><button className="pgn-btn" disabled={start+PS>=total} onClick={()=>setPage(p=>p+1)}>→</button></div>
+        </div>
+      </React.Fragment>)}
+    </div>
+  );
+}
+
+function ClienteAnaliseModal({cliente, semanaLabel, dispatches, supabaseClient, onClose}) {
+  const [obs,setObs]=React.useState('');const [notas,setNotas]=React.useState([]);const [saving,setSaving]=React.useState(false);const [msg,setMsg]=React.useState('');const [abaModal,setAbaModal]=React.useState('desl');
+  const baseAtiva=React.useMemo(()=>{try{return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{return[];}});
+  const infoBase=React.useMemo(()=>{const emp=(cliente.empresa||'').toLowerCase().trim();const cont=(cliente.conta||'').toLowerCase().trim();return baseAtiva.find(r=>(r.conta||'').toLowerCase().trim()===cont&&(r.empresa||'').toLowerCase().trim()===emp)||baseAtiva.find(r=>(r.conta||'').toLowerCase().trim()===cont)||null;},[cliente,baseAtiva]);
+  React.useEffect(()=>{
+    (async()=>{const dados=await sbCarregarTratativas(supabaseClient,cliente.conta,cliente.empresa);
+      if(dados&&dados.length>0){setNotas(dados);try{localStorage.setItem('analise_trat_'+cliente.conta+'_'+cliente.empresa,JSON.stringify(dados.slice(0,50)));}catch{}}
+      else{try{setNotas(JSON.parse(localStorage.getItem('analise_trat_'+cliente.conta+'_'+cliente.empresa)||'[]'));}catch{}}})();
+  },[cliente.conta,cliente.empresa]);
+  const salvar=async()=>{
+    if(!obs.trim())return;setSaving(true);
+    const nota={conta:cliente.conta,cliente:cliente.cliente,empresa:cliente.empresa,texto:obs.trim(),criado_em:new Date().toISOString(),semana:semanaLabel||''};
+    const sbOk=await sbSalvarTratativa(supabaseClient,nota);
+    if(!sbOk){const key='analise_trat_'+cliente.conta+'_'+cliente.empresa;const updated=[nota,...notas];try{localStorage.setItem(key,JSON.stringify(updated.slice(0,50)));}catch{}}
+    const updated=[nota,...notas];setNotas(updated);setObs('');setMsg('ok:Tratativa salva!');setTimeout(()=>setMsg(''),3000);setSaving(false);
+  };
+  const clsF=(e)=>e>10?'c':e>=6?'a':'s';const clsColor=(k)=>k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';const clsLabel=(k)=>k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
+  const cls=clsF(cliente.eventos);const cor=clsColor(cls);
+  const despCliente=(dispatches||[]).filter(d=>{const dConta=String(d.account||d.conta||d.client_id||'').trim().toLowerCase();const cConta=String(cliente.conta||'').trim().toLowerCase();return dConta===cConta;});
+  const tabStyle=(k)=>({background:'transparent',border:'none',padding:'7px 16px',fontSize:13,cursor:'pointer',color:abaModal===k?'#fff':'rgba(255,255,255,0.35)',fontWeight:abaModal===k?700:400,borderBottom:'2px solid '+(abaModal===k?'#a78bfa':'transparent'),marginBottom:-1,transition:'all 0.15s'});
+  const isOk=msg.startsWith('ok:');const msgText=msg.replace(/^(ok|err):/,'');
+  return(
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.82)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{background:'#0d1424',border:'1px solid rgba(255,255,255,0.1)',borderRadius:20,width:'100%',maxWidth:720,maxHeight:'92vh',overflow:'auto'}}>
+        <div style={{padding:'22px 28px 16px',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+          <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}>
+            <div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8,flexWrap:'wrap'}}>
+                <span style={{background:cor+'22',border:'1px solid '+cor+'44',color:cor,borderRadius:8,padding:'3px 10px',fontSize:12,fontWeight:700}}>{clsLabel(cls)}</span>
+                <span style={{fontSize:11,color:'rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.05)',borderRadius:6,padding:'3px 9px',fontFamily:'monospace'}}>{cliente.conta}</span>
+                {infoBase?.area&&<span style={{fontSize:11,background:'rgba(56,189,248,0.12)',color:'#7dd3fc',borderRadius:6,padding:'3px 9px'}}>{infoBase.area}</span>}
+              </div>
+              <div style={{fontSize:18,fontWeight:700,color:'#fff',marginBottom:4}}>{cliente.cliente}</div>
+              <div style={{display:'flex',gap:12,flexWrap:'wrap'}}>
+                <span style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>{(cliente.empresa||'').replace(/^\d+\.\s/,'')}</span>
+                <span style={{fontSize:12,color:cor,fontWeight:600}}>{cliente.eventos.toLocaleString('pt-BR')} eventos</span>
+                {infoBase?.mensalidade&&<span style={{fontSize:12,color:'#34d399'}}>💳 {infoBase.mensalidade}</span>}
+              </div>
+            </div>
+            <button onClick={onClose} style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:9,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginLeft:12}}>×</button>
+          </div>
+          <div style={{display:'flex',gap:2,marginTop:16,borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+            <button style={tabStyle('desl')} onClick={()=>setAbaModal('desl')}>🚗 Deslocamentos <span style={{background:'rgba(255,255,255,0.08)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{despCliente.length}</span></button>
+            <button style={tabStyle('trat')} onClick={()=>setAbaModal('trat')}>📋 Tratativas <span style={{background:'rgba(255,255,255,0.08)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4}}>{notas.length}</span></button>
+            <button style={tabStyle('info')} onClick={()=>setAbaModal('info')}>📄 Informações</button>
+          </div>
+        </div>
+        <div style={{padding:'20px 28px 28px'}}>
+          {abaModal==='desl'&&(despCliente.length===0?<div style={{textAlign:'center',padding:'32px 0',color:'rgba(255,255,255,0.2)'}}>Nenhum deslocamento encontrado para conta {cliente.conta}</div>:
+            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,overflow:'hidden'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr style={{borderBottom:'1px solid rgba(255,255,255,0.06)'}}>{['Data','Evento','Viatura','Filial'].map(h=>(<th key={h} style={{padding:'8px 12px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.28)',fontWeight:700,textTransform:'uppercase'}}>{h}</th>))}</tr></thead>
+                <tbody>{despCliente.slice(0,50).map((d,i)=>(<tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.01)'}}><td style={{padding:'8px 12px',color:'rgba(255,255,255,0.5)',fontFamily:'monospace',fontSize:11}}>{d.data_hora||'—'}</td><td style={{padding:'8px 12px',color:'rgba(255,255,255,0.7)'}}>{d.evento||'—'}</td><td style={{padding:'8px 12px',color:'rgba(255,255,255,0.4)'}}>{d.viatura||'—'}</td><td style={{padding:'8px 12px',color:'rgba(255,255,255,0.35)',fontSize:11}}>{d.filial||'—'}</td></tr>))}</tbody>
+              </table>
+            </div>
+          )}
+          {abaModal==='trat'&&(
+            <div>
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:10,fontWeight:600,textTransform:'uppercase',letterSpacing:'.05em'}}>Nova tratativa</div>
+                <textarea value={obs} onChange={e=>setObs(e.target.value)} rows={3} placeholder="Descreva a tratativa realizada, contato com o cliente, próximos passos..." style={{width:'100%',padding:'8px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.06)',color:'#fff',fontSize:13,outline:'none',resize:'vertical',marginBottom:8,fontFamily:'inherit'}}/>
+                {msg&&<div style={{marginBottom:8,fontSize:12,color:isOk?'#34d399':'#f87171'}}>{isOk?'✅ ':''}{msgText}</div>}
+                <button onClick={salvar} disabled={saving||!obs.trim()} style={{padding:'8px 20px',borderRadius:10,border:'1px solid rgba(167,139,250,0.45)',background:saving||!obs.trim()?'rgba(167,139,250,0.05)':'rgba(167,139,250,0.18)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:saving||!obs.trim()?'not-allowed':'pointer'}}>
+                  {saving?'Salvando…':'💾 Salvar tratativa'}
+                </button>
+              </div>
+              {notas.length>0&&(
+                <div>
+                  <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:12,fontWeight:600,textTransform:'uppercase'}}>Histórico · {notas.length} tratativa{notas.length>1?'s':''}</div>
+                  {notas.map((n,i)=>(<div key={i} style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,padding:'12px 16px',marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><span style={{fontSize:11,color:'rgba(255,255,255,0.28)',fontFamily:'monospace'}}>{new Date(n.criado_em||n.created_at||Date.now()).toLocaleString('pt-BR')}</span>{n.semana&&<span style={{fontSize:10,background:'rgba(167,139,250,0.12)',color:'#a78bfa',borderRadius:5,padding:'2px 8px'}}>{n.semana}</span>}</div>
+                    <div style={{fontSize:13,color:'rgba(255,255,255,0.78)',lineHeight:1.65}}>{n.texto}</div>
+                  </div>))}
+                </div>
+              )}
+            </div>
+          )}
+          {abaModal==='info'&&(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+              {[['Conta',cliente.conta],['Cliente',cliente.cliente],['Empresa',(cliente.empresa||'').replace(/^\d+\.\s/,'')],['Eventos esta semana',cliente.eventos.toLocaleString('pt-BR')],['Mensalidade',infoBase?.mensalidade||'Não cadastrado'],['Status',infoBase?.status||'Não cadastrado'],['Área',infoBase?.area||'Não cadastrado'],['Cidade',infoBase?.cidade||'Não cadastrado'],['Bairro',infoBase?.bairro||'Não cadastrado']].map(([l,v])=>(
+                <div key={l} style={{background:'rgba(255,255,255,0.03)',borderRadius:10,padding:'12px 14px',border:'1px solid rgba(255,255,255,0.06)'}}><div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',marginBottom:5}}>{l}</div><div style={{fontSize:13,color:'rgba(255,255,255,0.8)',wordBreak:'break-word'}}>{v||'—'}</div></div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnaliseBases({supabaseClient, dispatches}) {
+  const clsF=(e)=>e>10?'c':e>=6?'a':'s';
+  const clsColor=(k)=>k==='c'?'#f87171':k==='a'?'#fbbf24':'#34d399';
+  const clsLabel=(k)=>k==='c'?'Crítico':k==='a'?'Atenção':'Saudável';
+
+  const [weeks,setWeeks]=React.useState([]);
+  const [cw,setCw]=React.useState(0);
+  const [tab,setTab]=React.useState('c');
+  const [search,setSearch]=React.useState('');
+  const [empFil,setEmpFil]=React.useState('');
+  const [soloPI,setSoloPI]=React.useState(false);
+  const [page,setPage]=React.useState(0);
+  const [modal,setModal]=React.useState(null);
+  const [importPending,setImportPending]=React.useState(null);
+  const [importLabel,setImportLabel]=React.useState('');
+  const [novosClientes,setNovosClientes]=React.useState([]);
+  const [showNovos,setShowNovos]=React.useState(false);
+  const chartRef=React.useRef(null);const chartInst=React.useRef(null);
+  const PS=15;
+
+  // Carrega semanas do Supabase
+  React.useEffect(()=>{
+    (async()=>{
+      const dados=await sbCarregarSemanas(supabaseClient);
+      if(dados&&dados.length>0){
+        let baseAtiva=[];try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
+        const completadas=dados.map(w=>{
+          const contasRel=new Set(w.rows.map(r=>(r.conta||'').toLowerCase().trim()));
+          const ausentes=baseAtiva.filter(b=>!contasRel.has((b.conta||'').toLowerCase().trim())).map(b=>({conta:(b.conta||'').trim(),empresa:(b.empresa||'').trim(),cliente:(b.cliente||'').trim(),eventos:0}));
+          return{label:w.label,rows:[...w.rows,...ausentes]};
+        });
+        setWeeks(completadas);setCw(completadas.length-1);
+      }
+    })();
+  },[supabaseClient]);
+
+  const getTotals=(rows)=>({c:rows.filter(r=>clsF(r.eventos)==='c').length,a:rows.filter(r=>clsF(r.eventos)==='a').length,s:rows.filter(r=>clsF(r.eventos)==='s').length,t:rows.length});
+
+  const getEvo=(conta,ci)=>{
+    if(ci===0)return{label:'base',cls:'gray',k:'base'};
+    const nc=(conta||'').toLowerCase().trim();
+    const p=weeks[ci-1].rows.find(r=>(r.conta||'').toLowerCase().trim()===nc);
+    const c=weeks[ci].rows.find(r=>(r.conta||'').toLowerCase().trim()===nc);
+    if(!p)return{label:'novo',cls:'blue',k:'novo'};
+    const ps=clsF(p.eventos),cs=clsF(c?c.eventos:0);
+    const o={c:3,a:2,s:1};
+    if(ps===cs){if(cs==='c')return{label:'manteve crítico',cls:'red',k:'mc'};if(cs==='a')return{label:'manteve atenção',cls:'amber',k:'ma'};return{label:'manteve saudável',cls:'green',k:'ms'};}
+    if(o[cs]>o[ps])return cs==='c'?{label:'piorou → crítico',cls:'red',k:'pc'}:{label:'piorou → atenção',cls:'amber',k:'pa'};
+    return cs==='s'?{label:'melhorou → saudável',cls:'green',k:'mels'}:{label:'melhorou → atenção',cls:'amber',k:'mela'};
+  };
+
+  const evBadge=(cls)=>{
+    const m={red:['rgba(239,68,68,0.18)','#fca5a5'],amber:['rgba(251,191,36,0.18)','#fde68a'],green:['rgba(52,211,153,0.18)','#6ee7b7'],blue:['rgba(56,189,248,0.18)','#7dd3fc'],gray:['rgba(255,255,255,0.07)','rgba(255,255,255,0.35)']};
+    const[bg,color]=m[cls]||m.gray;
+    return{background:bg,color,display:'inline-flex',alignItems:'center',padding:'3px 9px',borderRadius:6,fontSize:11,fontWeight:600,whiteSpace:'nowrap'};
+  };
+
+  const getRows=()=>{
+    if(!weeks.length)return[];
+    let r=weeks[cw].rows.filter(x=>clsF(x.eventos)===tab);
+    if(soloPI)r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
+    if(search){const q=search.toLowerCase();r=r.filter(x=>(x.cliente||'').toLowerCase().includes(q)||(x.conta||'').toLowerCase().includes(q));}
+    if(empFil)r=r.filter(x=>x.empresa===empFil);
+    return r;
+  };
+
+  const getCmp=()=>{
+    if(cw===0||weeks.length<2)return null;
+    const pp=getTotals(weeks[cw-1].rows),cp=getTotals(weeks[cw].rows);
+    const mv={pc:0,pa:0,mc:0,ma:0,ms:0,mels:0,mela:0,novo:0};
+    const s1idx={};weeks[cw-1].rows.forEach(r=>{s1idx[(r.conta||'').toLowerCase().trim()]=r;});
+    weeks[cw].rows.forEach(r=>{const nc=(r.conta||'').toLowerCase().trim();if(!s1idx[nc]){mv.novo++;return;}const ps=clsF(s1idx[nc].eventos),cs=clsF(r.eventos);const o={c:3,a:2,s:1};if(ps===cs){if(cs==='c')mv.mc++;else if(cs==='a')mv.ma++;else mv.ms++;}else if(o[cs]>o[ps]){if(cs==='c')mv.pc++;else mv.pa++;}else{if(cs==='s')mv.mels++;else mv.mela++;}});
+    return{pp,cp,mv};
+  };
+
+  const handleFile=(e)=>{
+    const file=e.target.files[0];if(!file)return;const reader=new FileReader();
+    reader.onload=(ev)=>{try{
+      const wb=XLSX.read(ev.target.result,{type:'array'});const rows=[];
+      wb.SheetNames.forEach(name=>{const ws=wb.Sheets[name];const data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+        let sr=0,colEmp=0,colCont=1,colCli=2,colEvt=3;
+        for(let i=0;i<Math.min(5,data.length);i++){const v=data[i].map((x,idx)=>({val:String(x||'').toLowerCase(),idx}));
+          if(v.some(x=>x.val.includes('empresa')||x.val.includes('conta')||x.val.includes('fantasia')||x.val.includes('quantidade'))){
+            sr=i+1;v.forEach(({val,idx})=>{if(val.includes('empresa'))colEmp=idx;else if(val.includes('conta'))colCont=idx;else if(val.includes('fantasia')||val.includes('cliente'))colCli=idx;else if(val.includes('quantidade')||val.includes('eventos')||val.includes('event'))colEvt=idx;});break;}}
+        for(let i=sr;i<data.length;i++){const r=data[i];const emp=String(r[colEmp]||'').trim();const cont=String(r[colCont]||'').trim();const cli=String(r[colCli]||'').trim();const evs=parseInt(String(r[colEvt]||'0').replace(/[^\d]/g,''))||0;
+          if(emp&&cont&&cli)rows.push({conta:cont,cliente:cli,empresa:emp,eventos:evs});}});
+      if(!rows.length){alert('Nenhum dado encontrado. Colunas esperadas: Empresa, Conta, Fantasia/Cliente, Quantidade de eventos');return;}
+      const fname=(file.name||'').replace(/\.xlsx?$/i,'');
+      const dateMatch=fname.match(/(\d{2})[_\/](\d{2})(?:[_\/]\d{4})?[^\d]+(\d{2})[_\/](\d{2})/);
+      const sugLabel=dateMatch?dateMatch[1]+'/'+dateMatch[2]+' – '+dateMatch[3]+'/'+dateMatch[4]:fname.replace(/_/g,'/').trim();
+      setImportPending({rows,sugLabel});setImportLabel(sugLabel);
+    }catch(err){alert('Erro ao ler arquivo: '+err.message);}};
+    reader.readAsArrayBuffer(file);e.target.value='';
+  };
+
+  const confirmarImport=async(label,rows)=>{
+    setImportPending(null);
+    let baseAtiva=[];try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
+    const normStr=s=>(s||'').toLowerCase().trim();
+    const rowsNorm=rows.map(r=>({...r,conta:(r.conta||'').trim(),empresa:(r.empresa||'').trim()}));
+    const contasImport=new Set(rowsNorm.map(r=>normStr(r.conta)));
+    const ausentes=baseAtiva.filter(b=>!contasImport.has(normStr(b.conta))).map(b=>({conta:(b.conta||'').trim(),empresa:(b.empresa||'').trim(),cliente:(b.cliente||'').trim(),eventos:0}));
+    const rowsCompletos=[...rowsNorm,...ausentes];
+    const novos=rowsNorm.filter(r=>!baseAtiva.some(b=>normStr(b.conta)===normStr(r.conta)));
+    if(novos.length>0){setNovosClientes(novos);setShowNovos(true);}else{setNovosClientes([]);setShowNovos(false);}
+    sbSalvarSemana(supabaseClient,label,rowsNorm);
+    setWeeks(prev=>{const ei=prev.findIndex(w=>w.label===label);let nw;if(ei>=0){nw=[...prev];nw[ei]={label,rows:rowsCompletos};setCw(ei);}else{nw=[...prev,{label,rows:rowsCompletos}];setCw(nw.length-1);}return nw;});
+    setTab('c');setPage(0);setSearch('');setEmpFil('');setSoloPI(false);
+  };
+
+  const limpar=async()=>{if(!window.confirm('Limpar todas as semanas importadas?'))return;setWeeks([]);setCw(0);setTab('c');setPage(0);await sbLimparSemanas(supabaseClient);};
+
+  React.useEffect(()=>{
+    if(!chartRef.current||!weeks.length)return;
+    if(chartInst.current){chartInst.current.destroy();chartInst.current=null;}
+    const w=weeks[cw];const t=getTotals(w.rows);const hp=cw>0&&weeks.length>1;const tp=hp?getTotals(weeks[cw-1].rows):null;
+    if(hp){chartInst.current=new Chart(chartRef.current,{type:'bar',data:{labels:['Críticos','Atenção','Saudáveis'],datasets:[{label:weeks[cw-1].label,data:[tp.c,tp.a,tp.s],backgroundColor:'rgba(255,255,255,0.07)',borderColor:'rgba(255,255,255,0.2)',borderWidth:1,borderRadius:4},{label:w.label,data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.7)','rgba(251,191,36,0.7)','rgba(52,211,153,0.7)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:1,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'rgba(255,255,255,0.35)',font:{size:10}}}},scales:{x:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'rgba(255,255,255,0.3)'}}}}})}
+    else{chartInst.current=new Chart(chartRef.current,{type:'doughnut',data:{labels:['Críticos','Atenção','Saudáveis'],datasets:[{data:[t.c,t.a,t.s],backgroundColor:['rgba(239,68,68,0.8)','rgba(251,191,36,0.8)','rgba(52,211,153,0.8)'],borderColor:['#f87171','#fbbf24','#34d399'],borderWidth:2,hoverOffset:6}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false}}}});}
+  },[cw,weeks]);
+
+  if(!weeks.length){return(
+    <div style={{animation:'fadeUp 0.3s ease'}}>
+      {importPending&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.85)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}>
+          <div style={{background:'#0d1424',border:'1px solid rgba(167,139,250,0.3)',borderRadius:20,width:'100%',maxWidth:480,padding:28}}>
+            <div style={{fontSize:16,fontWeight:700,color:'#fff',marginBottom:6}}>Confirmar importação</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:20}}>{importPending.rows.length} clientes. Defina o nome desta semana:</div>
+            <input value={importLabel} onChange={e=>setImportLabel(e.target.value)} placeholder="Ex: 04/05 – 10/05" style={{width:'100%',padding:'10px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:14,outline:'none',marginBottom:16,boxSizing:'border-box'}} autoFocus onKeyDown={e=>{if(e.key==='Enter'&&importLabel.trim())confirmarImport(importLabel.trim(),importPending.rows);}}/>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{if(importLabel.trim())confirmarImport(importLabel.trim(),importPending.rows);}} disabled={!importLabel.trim()} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.15)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>✓ Importar como "{importLabel||'...'}"</button>
+              <button onClick={()=>setImportPending(null)} style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:32,flexWrap:'wrap',gap:12}}>
+        <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}><div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/><span style={{fontSize:20,fontWeight:700,color:'#fff'}}>Análise de Bases</span></div><div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Importe a 1ª semana para começar</div></div>
+        <label style={{padding:'9px 20px',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.12)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>Importar 1ª semana<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/></label>
+      </div>
+      <div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:20,padding:'72px 24px',textAlign:'center'}}>
+        <div style={{fontSize:52,marginBottom:16,opacity:.1}}>📊</div>
+        <div style={{fontSize:16,fontWeight:600,color:'rgba(255,255,255,0.25)',marginBottom:10}}>Nenhuma semana importada</div>
+        <div style={{fontSize:12,color:'rgba(255,255,255,0.15)',lineHeight:1.8,maxWidth:420,margin:'0 auto'}}>Exporte a planilha do seu sistema e importe aqui.<br/><code style={{color:'rgba(167,139,250,0.5)',fontSize:11}}>Empresa · Conta · Fantasia · Quantidade de eventos</code><br/>Importe a 1ª semana como base → depois a 2ª para ver o comparativo</div>
+      </div>
+    </div>
+  );}
+
+  const w=weeks[cw];const t=getTotals(w.rows);const cmp=getCmp();
+  const tabRows=getRows();const start=page*PS;const pageRows=tabRows.slice(start,start+PS);
+  const hp=cw>0&&weeks.length>1;const prevRows=hp?weeks[cw-1].rows:[];
+  const empresas=[...new Set(w.rows.map(r=>r.empresa||''))].filter(Boolean).sort();
+  const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
+  const dlt=(c,p)=>{const d=c-p;if(!d)return <span style={{color:'rgba(255,255,255,0.2)'}}>–</span>;return <span style={{color:d>0?'#f87171':'#34d399',fontWeight:700}}>{d>0?'+':''}{d}</span>;};
+
+  return(
+    <div style={{animation:'fadeUp 0.3s ease'}}>
+      {importPending&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999,padding:20}}>
+          <div style={{background:'#0d1424',border:'1px solid rgba(167,139,250,0.3)',borderRadius:20,width:'100%',maxWidth:480,padding:28}}>
+            <div style={{fontSize:16,fontWeight:700,color:'#fff',marginBottom:6}}>📥 Confirmar importação</div>
+            <div style={{fontSize:12,color:'rgba(255,255,255,0.4)',marginBottom:20}}>{importPending.rows.length} clientes. Defina o nome desta semana:</div>
+            <input value={importLabel} onChange={e=>setImportLabel(e.target.value)} placeholder="Ex: 04/05 – 10/05" style={{width:'100%',padding:'10px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:14,outline:'none',marginBottom:16,boxSizing:'border-box'}} autoFocus onKeyDown={e=>{if(e.key==='Enter'&&importLabel.trim())confirmarImport(importLabel.trim(),importPending.rows);}}/>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{if(importLabel.trim())confirmarImport(importLabel.trim(),importPending.rows);}} disabled={!importLabel.trim()} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(167,139,250,0.5)',background:'rgba(167,139,250,0.15)',color:'#a78bfa',fontSize:13,fontWeight:600,cursor:'pointer'}}>✓ Importar como "{importLabel||'...'}"</button>
+              <button onClick={()=>setImportPending(null)} style={{padding:'10px 16px',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.4)',fontSize:13,cursor:'pointer'}}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showNovos&&novosClientes.length>0&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.8)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9998,padding:20}} onClick={e=>e.target===e.currentTarget&&setShowNovos(false)}>
+          <div style={{background:'#0d1424',border:'1px solid rgba(251,191,36,0.3)',borderRadius:20,width:'100%',maxWidth:680,maxHeight:'85vh',overflow:'auto',padding:28}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:20}}>
+              <div><div style={{fontSize:16,fontWeight:700,color:'#fbbf24',marginBottom:4}}>⚠️ {novosClientes.length} cliente{novosClientes.length>1?'s':''} não encontrado{novosClientes.length>1?'s':''} na Base Ativa</div><div style={{fontSize:12,color:'rgba(255,255,255,0.4)'}}>Esses clientes estão no relatório mas não constam na Base Ativa.</div></div>
+              <button onClick={()=>setShowNovos(false)} style={{background:'rgba(255,255,255,0.06)',border:'1px solid rgba(255,255,255,0.1)',borderRadius:8,color:'rgba(255,255,255,0.5)',fontSize:18,cursor:'pointer',width:36,height:36,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+            </div>
+            <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.06)',borderRadius:10,overflow:'hidden',marginBottom:16,maxHeight:300,overflowY:'auto'}}>
+              <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                <thead><tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>{['Conta','Cliente','Empresa','Eventos'].map(h=>(<th key={h} style={{padding:'8px 14px',textAlign:'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase'}}>{h}</th>))}</tr></thead>
+                <tbody>{novosClientes.slice(0,100).map((r,i)=>(<tr key={i} style={{borderBottom:'1px solid rgba(255,255,255,0.04)'}}><td style={{padding:'7px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{r.conta}</td><td style={{padding:'7px 14px',color:'rgba(255,255,255,0.8)'}}>{r.cliente}</td><td style={{padding:'7px 14px',fontSize:11,color:'rgba(255,255,255,0.4)'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td><td style={{padding:'7px 14px',fontWeight:600,color:'#fff'}}>{(r.eventos||0).toLocaleString('pt-BR')}</td></tr>))}</tbody>
+              </table>
+            </div>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={async()=>{const novosParaBase=novosClientes.map(r=>({empresa:r.empresa,conta:r.conta,cliente:r.cliente,mensalidade:'',status:'Ativo',area:'',cidade:'',bairro:''}));let baseAtiva=[];try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}const atualizada=[...baseAtiva,...novosParaBase];try{localStorage.setItem('vtr_base_ativa',JSON.stringify(atualizada));}catch{}await sbSalvarBaseAtiva(supabaseClient,atualizada);setShowNovos(false);setNovosClientes([]);alert(novosClientes.length+' cliente(s) adicionados à Base Ativa!');}} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.1)',color:'#34d399',fontSize:13,fontWeight:600,cursor:'pointer'}}>✅ Adicionar à Base Ativa</button>
+              <button onClick={()=>setShowNovos(false)} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid rgba(255,255,255,0.12)',background:'rgba(255,255,255,0.04)',color:'rgba(255,255,255,0.5)',fontSize:13,cursor:'pointer'}}>Ignorar por agora</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {modal&&<ClienteAnaliseModal cliente={modal} semanaLabel={w.label} dispatches={dispatches||[]} supabaseClient={supabaseClient} onClose={()=>setModal(null)} />}
+
+      <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:24,flexWrap:'wrap',gap:12}}>
+        <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}><div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/><span style={{fontSize:20,fontWeight:700,color:'#fff'}}>Análise de Bases</span></div><div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Semana: <strong style={{color:'rgba(255,255,255,0.5)'}}>{w.label}</strong> · {t.t.toLocaleString('pt-BR')} clientes · clique num cliente para ver detalhes</div></div>
+        <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+          {weeks.map((wk,i)=>(<button key={i} onClick={()=>{setCw(i);setTab('c');setPage(0);setSearch('');setEmpFil('');setSoloPI(false);}} style={{padding:'5px 13px',borderRadius:20,border:'1px solid',fontSize:12,cursor:'pointer',borderColor:i===cw?'#a78bfa':'rgba(255,255,255,0.1)',background:i===cw?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:i===cw?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:i===cw?700:400}}>{wk.label}</button>))}
+          <label style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(167,139,250,0.1)',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>📥 Importar semana<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/></label>
+          {weeks.length>0&&<button onClick={limpar} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.07)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>🗑 Limpar</button>}
+        </div>
+      </div>
+
+      <div className="grid-4" style={{marginBottom:20}}>
+        {[{l:'Total',v:t.t,c:'#a78bfa'},{l:'Críticos',v:t.c,c:'#f87171'},{l:'Atenção',v:t.a,c:'#fbbf24'},{l:'Saudáveis',v:t.s,c:'#34d399'}].map((cd,i)=>{
+          const prev=hp?getTotals(weeks[cw-1].rows):null;const pv=prev?[prev.t,prev.c,prev.a,prev.s][i]:null;const d=pv!==null?cd.v-pv:null;
+          return(<div key={i} style={{borderRadius:16,padding:'16px 20px',border:'1px solid '+cd.c+'40',background:cd.c+'0a'}}>
+            <div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',marginBottom:10}}>{cd.l}</div>
+            <div style={{fontSize:32,fontWeight:700,color:cd.c,lineHeight:1}}>{cd.v.toLocaleString('pt-BR')}</div>
+            {d!==null&&<div style={{marginTop:8,fontSize:11,color:d===0?'rgba(255,255,255,0.2)':d>0&&i>0&&i<3?'#f87171':d<0&&i>0&&i<3?'#34d399':'rgba(255,255,255,0.3)'}}>{d===0?'igual':d>0?'↑ +'+d:'↓ '+d} vs semana ant.</div>}
+          </div>);
+        })}
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'280px 1fr',gap:16,marginBottom:20}}>
+        <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:16,padding:'16px 20px'}}>
+          <div style={{fontSize:13,fontWeight:600,color:'#fff',marginBottom:14}}>{hp?'Comparativo':'Distribuição atual'}</div>
+          <div style={{position:'relative',height:200}}><canvas ref={chartRef}/></div>
+        </div>
+        <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:16,padding:'16px 20px'}}>
+          <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}>
+            <span style={{fontSize:13,fontWeight:600,color:'#fff'}}>Comparativo evolutivo</span>
+            {hp&&<span style={{fontSize:11,color:'rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'2px 8px'}}>{weeks[cw-1].label} → {w.label}</span>}
+          </div>
+          {!cmp?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'rgba(255,255,255,0.2)',fontSize:12,textAlign:'center'}}>Importe a 2ª semana para ativar o comparativo automático</div>:(
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+              <div style={{background:'rgba(255,255,255,0.03)',borderRadius:12,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',marginBottom:10}}>Variação</div>
+                {[['Críticos',cmp.pp.c,cmp.cp.c,'#f87171'],['Atenção',cmp.pp.a,cmp.cp.a,'#fbbf24'],['Saudáveis',cmp.pp.s,cmp.cp.s,'#34d399'],['Total',cmp.pp.t,cmp.cp.t,'#a78bfa']].map(([l,p,c,cor])=>(<div key={l} style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span><span style={{fontSize:11,fontWeight:600,color:'#fff'}}>{p} → {c} {dlt(c,p)}</span></div>))}
+              </div>
+              <div style={{background:'rgba(239,68,68,0.05)',border:'1px solid rgba(239,68,68,0.1)',borderRadius:12,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'#f87171',textTransform:'uppercase',marginBottom:10}}>Negativos</div>
+                {[['Pioraram → crítico',cmp.mv.pc],['Pioraram → atenção',cmp.mv.pa],['Mantiveram crítico',cmp.mv.mc],['Mantiveram atenção',cmp.mv.ma]].map(([l,v])=>(<div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span><span style={{fontSize:13,fontWeight:700,color:v>0?'#f87171':'rgba(255,255,255,0.2)'}}>{v}</span></div>))}
+              </div>
+              <div style={{background:'rgba(52,211,153,0.05)',border:'1px solid rgba(52,211,153,0.1)',borderRadius:12,padding:'12px 14px'}}>
+                <div style={{fontSize:10,color:'#34d399',textTransform:'uppercase',marginBottom:10}}>Positivos</div>
+                {[['Melhoraram → saudável',cmp.mv.mels],['Melhoraram → atenção',cmp.mv.mela],['Mantiveram saudável',cmp.mv.ms],['Novos clientes',cmp.mv.novo]].map(([l,v])=>(<div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span><span style={{fontSize:13,fontWeight:700,color:v>0?'#34d399':'rgba(255,255,255,0.2)'}}>{v}</span></div>))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
+        <div style={{display:'flex',gap:4}}>
+          {[['c','Críticos',t.c,'#f87171'],['a','Atenção',t.a,'#fbbf24'],['s','Saudáveis',t.s,'#34d399']].map(([k,l,n,c])=>(<button key={k} onClick={()=>{setTab(k);setPage(0);}} style={{background:'transparent',border:'none',padding:'8px 18px',fontSize:13,cursor:'pointer',color:tab===k?c:'rgba(255,255,255,0.35)',fontWeight:tab===k?700:400,borderBottom:'2px solid '+(tab===k?c:'transparent'),marginBottom:-1,transition:'all 0.15s'}}>{l} <span style={{background:'rgba(255,255,255,0.05)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4,color:tab===k?c:'rgba(255,255,255,0.25)'}}>{n}</span></button>))}
+        </div>
+        <button onClick={()=>setSoloPI(p=>!p)} style={{padding:'5px 14px',borderRadius:8,border:'1px solid',fontSize:12,cursor:'pointer',marginBottom:4,borderColor:soloPI?'#a78bfa':'rgba(255,255,255,0.12)',background:soloPI?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:soloPI?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:soloPI?700:400}}>🏢 Portaria Inteligente</button>
+      </div>
+      <div style={{display:'flex',gap:8,margin:'12px 0',flexWrap:'wrap'}}>
+        <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="🔍 Buscar cliente ou conta..." style={{...inp,flex:1,minWidth:220}}/>
+        <select value={empFil} onChange={e=>{setEmpFil(e.target.value);setPage(0);}} style={inp}><option value="">Todas as empresas</option>{empresas.map(em=><option key={em} value={em}>{em.replace(/^\d+\.\s/,'')}</option>)}</select>
+      </div>
+      <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
+        <div className="table-scroll">
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
+            <thead><tr style={{borderBottom:'1px solid rgba(255,255,255,0.07)'}}>{['Conta','Cliente','Empresa','Eventos',...(hp?['Ant.','Evolução']:[])].map(h=>(<th key={h} style={{padding:'10px 14px',textAlign:h==='Eventos'||h==='Ant.'?'right':'left',fontSize:10,color:'rgba(255,255,255,0.3)',fontWeight:700,background:'rgba(255,255,255,0.02)',textTransform:'uppercase',letterSpacing:'.07em'}}>{h}</th>))}</tr></thead>
+            <tbody>
+              {pageRows.length===0&&<tr><td colSpan={hp?6:4} style={{padding:28,textAlign:'center',color:'rgba(255,255,255,0.15)',fontSize:13}}>Nenhum cliente encontrado</td></tr>}
+              {pageRows.map((r,i)=>{
+                const evo=hp?getEvo(r.conta,cw):null;const pv=hp?prevRows.find(p=>(p.conta||'').toLowerCase().trim()===(r.conta||'').toLowerCase().trim()):null;const isPI=(r.cliente||'').toUpperCase().includes('PORTARIA');
+                return(<tr key={i} onClick={()=>setModal(r)} style={{borderBottom:'1px solid rgba(255,255,255,0.04)',background:i%2===0?'transparent':'rgba(255,255,255,0.015)',cursor:'pointer',transition:'background 0.1s'}} onMouseEnter={e=>e.currentTarget.style.background='rgba(167,139,250,0.07)'} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'transparent':'rgba(255,255,255,0.015)'}>
+                  <td style={{padding:'9px 14px',fontFamily:'monospace',fontSize:11,color:'rgba(255,255,255,0.35)'}}>{r.conta}</td>
+                  <td style={{padding:'9px 14px'}}><span style={{color:'rgba(255,255,255,0.85)'}}>{r.cliente}</span>{isPI&&<span style={{marginLeft:6,background:'rgba(167,139,250,0.15)',color:'#a78bfa',borderRadius:5,padding:'1px 6px',fontSize:10,fontWeight:600}}>PI</span>}</td>
+                  <td style={{padding:'9px 14px',fontSize:11,color:'rgba(255,255,255,0.3)'}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</td>
+                  <td style={{padding:'9px 14px',textAlign:'right',fontWeight:700,color:'#fff'}}>{r.eventos.toLocaleString('pt-BR')}</td>
+                  {hp&&<td style={{padding:'9px 14px',textAlign:'right',color:'rgba(255,255,255,0.25)'}}>{pv?pv.eventos.toLocaleString('pt-BR'):'—'}</td>}
+                  {hp&&<td style={{padding:'9px 14px'}}>{evo&&<span style={{...evBadge(evo.cls)}}>{evo.label}</span>}</td>}
+                </tr>);
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="pgn"><span className="pgn-info">{start+1}–{Math.min(start+PS,tabRows.length)} de {tabRows.length} clientes</span><button className="pgn-btn" disabled={page===0} onClick={()=>setPage(p=>p-1)}>←</button><button className="pgn-btn" disabled={start+PS>=tabRows.length} onClick={()=>setPage(p=>p+1)}>→</button></div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -4158,7 +4661,7 @@ function App() {
     setSegSyncStatus("syncing");
     setSegSyncMsg("Buscando deslocamentos na Segware…");
     window._segSyncSetMsg = setSegSyncMsg;
-    const result = await sincronizarSegware(supabaseClient, segFilial, segDiasAtras);
+    const result = await sincronizarSegware(supabaseClient, segFilial, 2);
     if (result.erro) {
       setSegSyncStatus("erro");
       setSegSyncMsg("Erro: " + result.erro);
@@ -4166,17 +4669,12 @@ function App() {
       setSegSyncStatus("ok");
       const ts = getUltimaSyncSegware();
       setSegUltimaSync(ts);
-      const totalBruto = result.total || 0;
-      const filtrados = result.filtrados || 0;
-      const novos = result.novos || 0;
-      if (novos > 0) {
-        setSegSyncMsg("✅ " + novos + " novos deslocamentos IN_PLACE importados! ("+filtrados+" com status 4 de "+totalBruto+" eventos brutos)");
-      } else if (filtrados === 0 && totalBruto > 0) {
-        setSegSyncMsg("⚠️ "+totalBruto+" eventos recebidos mas nenhum com status IN_PLACE (4). Verifique os eventos no console (F12).");
-      } else {
-        setSegSyncMsg("✅ Sincronizado — nenhum dado novo ("+filtrados+" IN_PLACE de "+totalBruto+" eventos)");
-      }
-      if (novos > 0) {
+      setSegSyncMsg(
+        result.novos > 0
+          ? "✅ " + result.novos + " novos deslocamentos importados!"
+          : "✅ Sincronizado — nenhum dado novo (total analisado: " + (result.total||0) + ")"
+      );
+      if (result.novos > 0) {
         try { localStorage.removeItem("vtr_dados_cache"); } catch {}
         await carregarDados(true);
       }
@@ -4226,17 +4724,13 @@ function App() {
 
   async function fetchAll(table,order,ascending=true){
     let all=[],from=0;const PAGE=1000;const MAX=5000;
-    // Para dispatches: limita aos últimos 30 dias e máx 5000 registros
     const filtroData = table==="dispatches"
       ? new Date(Date.now() - 30*24*3600000).toISOString().slice(0,10)
       : null;
     while(true){
       let q = supabaseClient.from(table).select("*").range(from,from+PAGE-1);
-      if(filtroData) {
-        q = q.order("created_at",{ascending:false}).gte("created_at", filtroData);
-      } else {
-        q = q.order(order,{ascending});
-      }
+      if(filtroData){q=q.order("created_at",{ascending:false}).gte("created_at",filtroData);}
+      else{q=q.order(order,{ascending});}
       const{data,error}=await q;
       if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
       if(!data||data.length===0)break;
@@ -4358,15 +4852,12 @@ function App() {
       if(novosClientes.length>0){for(let i=0;i<novosClientes.length;i+=500)await supabaseClient.from("clients").upsert(novosClientes.slice(i,i+500),{onConflict:"codigo_cliente,filial"});}
       // Dedup: busca só os dispatches do mesmo período do arquivo (evita timeout)
       const datasNoArquivo = sanitized.map(d=>d.data_hora).filter(Boolean);
-      // Extrai meses únicos do arquivo para limitar a busca
       const mesesArquivo = [...new Set(datasNoArquivo.map(dh=>{
         try{ const p=dh.split(", ")[0].split("/"); return `${p[2]}-${p[1].padStart(2,"0")}`; }catch{ return null; }
       }).filter(Boolean))];
       const existentesSet=new Set();
       for(const mk of mesesArquivo){
         const [ano,mes] = mk.split("-");
-        // Busca registros desse mês específico pelo campo data_hora (formato DD/MM/YYYY)
-        const prefixo1 = `01/${mes}/${ano}`; // início do mês
         let fromDesl=0;
         while(true){
           const{data:existentes}=await supabaseClient.from("dispatches")
@@ -4521,6 +5012,8 @@ function App() {
         <TabBtn active={aba==="relatorios"} onClick={()=>setAba("relatorios")} accent="#fb923c">📋 Relatórios{aba==="relatorios"&&mesBadge}</TabBtn>
         {isAdmin&&<TabBtn active={aba==="importacao"} onClick={()=>setAba("importacao")}>📥 Importação{clients.length>0&&<span style={{ marginLeft:6,background:"rgba(56,189,248,0.2)",color:"#38bdf8",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{clients.length}</span>}</TabBtn>}
         {isAdmin&&<TabBtn active={aba==="usuarios"} onClick={()=>setAba("usuarios")} accent="#f87171">👑 Usuários</TabBtn>}
+        <TabBtn active={aba==="baseAtiva"} onClick={()=>setAba("baseAtiva")} accent="#06b6d4">🗂️ Base Ativa</TabBtn>
+        <TabBtn active={aba==="analise"} onClick={()=>setAba("analise")} accent="#a78bfa">📈 Análise de Bases</TabBtn>
         {/* indicador global quando mês filtrado */}
         {mesFiltroGlobal!=="Todos"&&(
           <div style={{ marginLeft:"auto",display:"flex",alignItems:"center",gap:8,padding:"5px 12px",borderRadius:99,background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.2)",fontSize:11,color:"#38bdf8",fontWeight:600 }}>
@@ -4560,7 +5053,7 @@ function App() {
             </div>
           )}
 
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:14, marginBottom:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
             {/* Filial padrão */}
             <div>
               <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Filial padrão para novos registros</label>
@@ -4582,19 +5075,6 @@ function App() {
                   style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none" }}
                 />
                 <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)" }}>minutos</span>
-              </div>
-            </div>
-            {/* Dias atrás */}
-            <div>
-              <label style={{ display:"block", fontSize:11, color:"rgba(255,255,255,0.5)", marginBottom:4 }}>Buscar eventos dos últimos</label>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <input
-                  type="number" min="1" max="30"
-                  value={segDiasAtras}
-                  onChange={e=>setSegDiasAtras(Math.max(1,Math.min(30,parseInt(e.target.value)||2)))}
-                  style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(255,255,255,0.12)", background:"rgba(255,255,255,0.05)", color:"#fff", fontSize:13, outline:"none" }}
-                />
-                <span style={{ fontSize:13, color:"rgba(255,255,255,0.5)" }}>dias</span>
               </div>
             </div>
           </div>
@@ -4624,11 +5104,13 @@ function App() {
             </button>
           </div>
           <div style={{ marginTop:10, fontSize:10, color:"rgba(255,255,255,0.2)", lineHeight:1.5 }}>
-            Filtra apenas IN_PLACE (status 4) — VTR saiu e chegou no local · Evita duplicatas automaticamente · Máx. 90 dias no dashboard
+            Busca os últimos 30 dias na API Segware · Filtra status DISPLACEMENT (2), DISPLACEMENT_STARTED (3), IN_PLACE (4), IN_PLACE_DONE (7) · Evita duplicatas automaticamente
           </div>
         </div>
       )}
       {aba==="usuarios"&&isAdmin&&<UsuariosTab usuarioAtual={usuario} />}
+      {aba==="baseAtiva"&&<BaseAtivaTab supabaseClient={supabaseClient} />}
+      {aba==="analise"&&<AnaliseBases supabaseClient={supabaseClient} dispatches={dispatches} />}
       <div style={{ marginTop:24,textAlign:"center",fontSize:11,color:"rgba(255,255,255,0.15)",display:"flex",alignItems:"center",justifyContent:"center",gap:10 }}>
         <img src={LOGO_LARANJA} alt="Servis" style={{ height:18,width:"auto",opacity:0.3 }} />
         Custo por deslocamento: R$ {CUSTO_FISCAL} · Dados em nuvem · Portaria Inteligente separada automaticamente
