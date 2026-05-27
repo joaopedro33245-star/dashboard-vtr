@@ -4776,13 +4776,17 @@ function App() {
   },[usuario]);
 
   async function fetchAll(table,order,ascending=true){
-    let all=[],from=0;const PAGE=1000;const MAX=5000;
-    const filtroData = table==="dispatches"
-      ? new Date(Date.now() - 30*24*3600000).toISOString().slice(0,10)
-      : null;
-    while(true){
-      let q = supabaseClient.from(table).select("*").range(from,from+PAGE-1);
-      if(filtroData){q=q.order("created_at",{ascending:false}).gte("created_at",filtroData);}
+    // Conta total real primeiro para buscar tudo de uma vez sem limite
+    const{count,error:cErr}=await supabaseClient.from(table).select('*',{count:'exact',head:true});
+    if(cErr) throw new Error(`Erro ao contar ${table}: ${cErr.message}`);
+    const total=count||0;
+    if(total===0)return[];
+    const PAGE=1000;let all=[],from=0;
+    // Para dispatches: ordena por created_at desc (usa o índice)
+    const useCreatedAt = table==="dispatches";
+    while(from<total){
+      let q=supabaseClient.from(table).select("*").range(from,Math.min(from+PAGE-1,total-1));
+      if(useCreatedAt){q=q.order("created_at",{ascending:false});}
       else{q=q.order(order,{ascending});}
       const{data,error}=await q;
       if(error) throw new Error(`Erro ao carregar ${table}: ${error.message}`);
@@ -4790,7 +4794,8 @@ function App() {
       all=all.concat(data);
       if(data.length<PAGE)break;
       from+=PAGE;
-      if(all.length>=MAX)break;
+      // Pequena pausa para não sobrecarregar
+      if(from<total) await new Promise(r=>setTimeout(r,50));
     }
     return all;
   }
