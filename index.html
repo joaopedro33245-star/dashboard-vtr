@@ -4426,9 +4426,13 @@ function AnaliseBases({supabaseClient, dispatches}) {
   },[supabaseClient]);
 
   // Filtra rows pela filial e PI selecionados
+  const normEmpresa=(e)=>(e||'').replace(/^\d+\.\s*/,'').trim().toUpperCase();
   const filtrarRows=React.useCallback((rows)=>{
     let r=rows;
-    if(filialFil!=='Todas') r=r.filter(x=>(x.empresa||'').includes(filialFil));
+    if(filialFil!=='Todas'){
+      // Compara normalizando para evitar problema com prefixo "7. "
+      r=r.filter(x=>normEmpresa(x.empresa)===filialFil.toUpperCase());
+    }
     if(soloPI) r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
     return r;
   },[filialFil,soloPI]);
@@ -4441,7 +4445,13 @@ function AnaliseBases({supabaseClient, dispatches}) {
   // Lista de filiais únicas em todas as semanas
   const filiaisDisponiveis=React.useMemo(()=>{
     const s=new Set();
-    weeks.forEach(w=>w.rows.forEach(r=>{if(r.empresa)s.add(r.empresa);}));
+    weeks.forEach(w=>w.rows.forEach(r=>{
+      if(r.empresa){
+        // Normaliza removendo prefixo numérico "7. "
+        const norm=(r.empresa||'').replace(/^\d+\.\s*/,'').trim();
+        if(norm)s.add(norm);
+      }
+    }));
     return['Todas',...Array.from(s).sort()];
   },[weeks]);
 
