@@ -4398,6 +4398,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const [tab,setTab]=React.useState('c');
   const [search,setSearch]=React.useState('');
   const [empFil,setEmpFil]=React.useState('');
+  const [filialFil,setFilialFil]=React.useState('Todas');
   const [soloPI,setSoloPI]=React.useState(false);
   const [page,setPage]=React.useState(0);
   const [modal,setModal]=React.useState(null);
@@ -4424,7 +4425,25 @@ function AnaliseBases({supabaseClient, dispatches}) {
     })();
   },[supabaseClient]);
 
-  const getTotals=(rows)=>({c:rows.filter(r=>clsF(r.eventos)==='c').length,a:rows.filter(r=>clsF(r.eventos)==='a').length,s:rows.filter(r=>clsF(r.eventos)==='s').length,t:rows.length});
+  // Filtra rows pela filial e PI selecionados
+  const filtrarRows=React.useCallback((rows)=>{
+    let r=rows;
+    if(filialFil!=='Todas') r=r.filter(x=>(x.empresa||'').includes(filialFil));
+    if(soloPI) r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
+    return r;
+  },[filialFil,soloPI]);
+
+  const getTotals=(rows)=>{
+    const f=filtrarRows(rows);
+    return{c:f.filter(r=>clsF(r.eventos)==='c').length,a:f.filter(r=>clsF(r.eventos)==='a').length,s:f.filter(r=>clsF(r.eventos)==='s').length,t:f.length};
+  };
+
+  // Lista de filiais únicas em todas as semanas
+  const filiaisDisponiveis=React.useMemo(()=>{
+    const s=new Set();
+    weeks.forEach(w=>w.rows.forEach(r=>{if(r.empresa)s.add(r.empresa);}));
+    return['Todas',...Array.from(s).sort()];
+  },[weeks]);
 
   const getEvo=(conta,ci)=>{
     if(ci===0)return{label:'base',cls:'gray',k:'base'};
@@ -4447,8 +4466,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
 
   const getRows=()=>{
     if(!weeks.length)return[];
-    let r=weeks[cw].rows.filter(x=>clsF(x.eventos)===tab);
-    if(soloPI)r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
+    let r=filtrarRows(weeks[cw].rows).filter(x=>clsF(x.eventos)===tab);
     if(search){const q=search.toLowerCase();r=r.filter(x=>(x.cliente||'').toLowerCase().includes(q)||(x.conta||'').toLowerCase().includes(q));}
     if(empFil)r=r.filter(x=>x.empresa===empFil);
     return r;
@@ -4456,11 +4474,27 @@ function AnaliseBases({supabaseClient, dispatches}) {
 
   const getCmp=()=>{
     if(cw===0||weeks.length<2)return null;
+    const rowsPrev=filtrarRows(weeks[cw-1].rows);
+    const rowsCurr=filtrarRows(weeks[cw].rows);
     const pp=getTotals(weeks[cw-1].rows),cp=getTotals(weeks[cw].rows);
     const mv={pc:0,pa:0,mc:0,ma:0,ms:0,mels:0,mela:0,novo:0};
-    const s1idx={};weeks[cw-1].rows.forEach(r=>{s1idx[(r.conta||'').toLowerCase().trim()]=r;});
-    weeks[cw].rows.forEach(r=>{const nc=(r.conta||'').toLowerCase().trim();if(!s1idx[nc]){mv.novo++;return;}const ps=clsF(s1idx[nc].eventos),cs=clsF(r.eventos);const o={c:3,a:2,s:1};if(ps===cs){if(cs==='c')mv.mc++;else if(cs==='a')mv.ma++;else mv.ms++;}else if(o[cs]>o[ps]){if(cs==='c')mv.pc++;else mv.pa++;}else{if(cs==='s')mv.mels++;else mv.mela++;}});
-    return{pp,cp,mv};
+    // Clientes críticos nas duas semanas (para alerta)
+    const criticosManutidos=[];
+    const s1idx={};rowsPrev.forEach(r=>{s1idx[(r.conta||'').toLowerCase().trim()]=r;});
+    rowsCurr.forEach(r=>{
+      const nc=(r.conta||'').toLowerCase().trim();
+      if(!s1idx[nc]){mv.novo++;return;}
+      const ps=clsF(s1idx[nc].eventos),cs=clsF(r.eventos);
+      const o={c:3,a:2,s:1};
+      if(ps===cs){
+        if(cs==='c'){mv.mc++;criticosManutidos.push({...r,eventosAnt:s1idx[nc].eventos});}
+        else if(cs==='a')mv.ma++;else mv.ms++;
+      }else if(o[cs]>o[ps]){if(cs==='c'){mv.pc++;criticosManutidos.push({...r,eventosAnt:s1idx[nc].eventos,piora:true});}else mv.pa++;}
+      else{if(cs==='s')mv.mels++;else mv.mela++;}
+    });
+    // Ordena críticos mantidos por eventos desc
+    criticosManutidos.sort((a,b)=>b.eventos-a.eventos);
+    return{pp,cp,mv,criticosManutidos};
   };
 
   const exportarExcel=()=>{
@@ -4624,6 +4658,10 @@ function AnaliseBases({supabaseClient, dispatches}) {
         <div><div style={{display:'flex',alignItems:'center',gap:10,marginBottom:4}}><div style={{width:8,height:8,borderRadius:'50%',background:'#a78bfa',boxShadow:'0 0 8px #a78bfa'}}/><span style={{fontSize:20,fontWeight:700,color:'#fff'}}>Análise de Bases</span></div><div style={{fontSize:12,color:'rgba(255,255,255,0.3)',marginLeft:18}}>Semana: <strong style={{color:'rgba(255,255,255,0.5)'}}>{w.label}</strong> · {t.t.toLocaleString('pt-BR')} clientes · clique num cliente para ver detalhes</div></div>
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           {weeks.map((wk,i)=>(<button key={i} onClick={()=>{setCw(i);setTab('c');setPage(0);setSearch('');setEmpFil('');setSoloPI(false);}} style={{padding:'5px 13px',borderRadius:20,border:'1px solid',fontSize:12,cursor:'pointer',borderColor:i===cw?'#a78bfa':'rgba(255,255,255,0.1)',background:i===cw?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:i===cw?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:i===cw?700:400}}>{wk.label}</button>))}
+          <select value={filialFil} onChange={e=>{setFilialFil(e.target.value);setPage(0);}}
+            style={{padding:'6px 12px',borderRadius:10,border:filialFil!=='Todas'?'1px solid rgba(56,189,248,0.5)':'1px solid rgba(255,255,255,0.15)',background:filialFil!=='Todas'?'rgba(56,189,248,0.1)':'rgba(255,255,255,0.05)',color:filialFil!=='Todas'?'#38bdf8':'rgba(255,255,255,0.6)',fontSize:12,outline:'none',cursor:'pointer',fontWeight:filialFil!=='Todas'?700:400}}>
+            {filiaisDisponiveis.map(f=><option key={f} value={f}>{f==='Todas'?'🏢 Todas as filiais':f.replace(/^\d+\.\s/,'')}</option>)}
+          </select>
           <label style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(167,139,250,0.1)',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>📥 Importar semana<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/></label>
           {weeks.length>0&&<button onClick={exportarExcel} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.08)',color:'#34d399',fontSize:12,fontWeight:600,cursor:'pointer'}}>⬇ Exportar Excel</button>}
           {weeks.length>0&&<button onClick={limpar} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.07)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>🗑 Limpar</button>}
@@ -4652,6 +4690,38 @@ function AnaliseBases({supabaseClient, dispatches}) {
             {hp&&<span style={{fontSize:11,color:'rgba(255,255,255,0.3)',background:'rgba(255,255,255,0.04)',border:'1px solid rgba(255,255,255,0.08)',borderRadius:6,padding:'2px 8px'}}>{weeks[cw-1].label} → {w.label}</span>}
           </div>
           {!cmp?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'rgba(255,255,255,0.2)',fontSize:12,textAlign:'center'}}>Importe a 2ª semana para ativar o comparativo automático</div>:(
+            <div>
+            {cmp.criticosManutidos&&cmp.criticosManutidos.length>0&&(
+              <div style={{marginBottom:14,borderRadius:10,border:'1px solid rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.06)',overflow:'hidden'}}>
+                <div style={{padding:'8px 14px',borderBottom:'1px solid rgba(239,68,68,0.2)',display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:8}}>
+                    <span style={{fontSize:14}}>🚨</span>
+                    <span style={{fontSize:12,fontWeight:700,color:'#f87171'}}>Críticos por 2+ semanas seguidas</span>
+                    <span style={{background:'rgba(239,68,68,0.2)',color:'#f87171',borderRadius:99,padding:'1px 8px',fontSize:11,fontWeight:700}}>{cmp.criticosManutidos.length}</span>
+                  </div>
+                  <span style={{fontSize:10,color:'rgba(255,255,255,0.3)'}}>clique para abrir o cliente</span>
+                </div>
+                <div style={{maxHeight:160,overflowY:'auto'}}>
+                  {cmp.criticosManutidos.slice(0,8).map((r,i)=>(
+                    <div key={i} onClick={()=>setModal(r)}
+                      style={{display:'flex',justifyContent:'space-between',alignItems:'center',padding:'7px 14px',borderBottom:'1px solid rgba(255,255,255,0.04)',cursor:'pointer',transition:'background 0.1s'}}
+                      onMouseEnter={e=>e.currentTarget.style.background='rgba(239,68,68,0.08)'}
+                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                      <div>
+                        <span style={{fontSize:12,color:'#fff',fontWeight:500}}>{r.cliente}</span>
+                        <span style={{fontSize:10,color:'rgba(255,255,255,0.35)',marginLeft:8}}>{(r.empresa||'').replace(/^\d+\.\s/,'')}</span>
+                      </div>
+                      <div style={{display:'flex',gap:10,alignItems:'center',flexShrink:0,marginLeft:12}}>
+                        <span style={{fontSize:11,color:'rgba(255,255,255,0.3)'}}>ant: {r.eventosAnt}</span>
+                        <span style={{fontSize:13,fontWeight:700,color:'#f87171'}}>{r.eventos}</span>
+                        {r.piora&&<span style={{fontSize:10,background:'rgba(239,68,68,0.2)',color:'#f87171',borderRadius:5,padding:'1px 6px'}}>↑ piorou</span>}
+                      </div>
+                    </div>
+                  ))}
+                  {cmp.criticosManutidos.length>8&&<div style={{padding:'6px 14px',fontSize:11,color:'rgba(255,255,255,0.25)',textAlign:'center'}}>+{cmp.criticosManutidos.length-8} clientes críticos adicionais</div>}
+                </div>
+              </div>
+            )}
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
               <div style={{background:'rgba(255,255,255,0.03)',borderRadius:12,padding:'12px 14px'}}>
                 <div style={{fontSize:10,color:'rgba(255,255,255,0.3)',textTransform:'uppercase',marginBottom:10}}>Variação</div>
@@ -4666,6 +4736,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
                 {[['Melhoraram → saudável',cmp.mv.mels],['Melhoraram → atenção',cmp.mv.mela],['Mantiveram saudável',cmp.mv.ms],['Novos clientes',cmp.mv.novo]].map(([l,v])=>(<div key={l} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.04)'}}><span style={{fontSize:11,color:'rgba(255,255,255,0.4)'}}>{l}</span><span style={{fontSize:13,fontWeight:700,color:v>0?'#34d399':'rgba(255,255,255,0.2)'}}>{v}</span></div>))}
               </div>
             </div>
+            </div>
           )}
         </div>
       </div>
@@ -4674,7 +4745,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
         <div style={{display:'flex',gap:4}}>
           {[['c','Críticos',t.c,'#f87171'],['a','Atenção',t.a,'#fbbf24'],['s','Saudáveis',t.s,'#34d399']].map(([k,l,n,c])=>(<button key={k} onClick={()=>{setTab(k);setPage(0);}} style={{background:'transparent',border:'none',padding:'8px 18px',fontSize:13,cursor:'pointer',color:tab===k?c:'rgba(255,255,255,0.35)',fontWeight:tab===k?700:400,borderBottom:'2px solid '+(tab===k?c:'transparent'),marginBottom:-1,transition:'all 0.15s'}}>{l} <span style={{background:'rgba(255,255,255,0.05)',borderRadius:99,padding:'1px 7px',fontSize:11,marginLeft:4,color:tab===k?c:'rgba(255,255,255,0.25)'}}>{n}</span></button>))}
         </div>
-        <button onClick={()=>setSoloPI(p=>!p)} style={{padding:'5px 14px',borderRadius:8,border:'1px solid',fontSize:12,cursor:'pointer',marginBottom:4,borderColor:soloPI?'#a78bfa':'rgba(255,255,255,0.12)',background:soloPI?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:soloPI?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:soloPI?700:400}}>🏢 Portaria Inteligente</button>
+        <button onClick={()=>{setSoloPI(p=>!p);setPage(0);}} style={{padding:'5px 14px',borderRadius:8,border:'1px solid',fontSize:12,cursor:'pointer',marginBottom:4,borderColor:soloPI?'#a78bfa':'rgba(255,255,255,0.12)',background:soloPI?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:soloPI?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:soloPI?700:400}}>🏢 {soloPI?'✓ ':''} Portaria Inteligente</button>
       </div>
       <div style={{display:'flex',gap:8,margin:'12px 0',flexWrap:'wrap'}}>
         <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="🔍 Buscar cliente ou conta..." style={{...inp,flex:1,minWidth:220}}/>
