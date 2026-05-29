@@ -4463,6 +4463,47 @@ function AnaliseBases({supabaseClient, dispatches}) {
     return{pp,cp,mv};
   };
 
+  const exportarExcel=()=>{
+    if(!weeks.length)return;
+    // Monta todas as semanas disponíveis
+    const todasSemanas=weeks.map(w=>w.label);
+    // Junta todos os clientes únicos de todas as semanas
+    const clienteMap={};
+    weeks.forEach(w=>{
+      w.rows.forEach(r=>{
+        const key=(r.conta||'').trim()+'||'+(r.empresa||'').trim();
+        if(!clienteMap[key])clienteMap[key]={conta:r.conta,empresa:r.empresa,cliente:r.cliente,semanas:{}};
+        clienteMap[key].semanas[w.label]=r.eventos||0;
+      });
+    });
+    // Cabeçalho: Empresa | Conta | Cliente | semana1 | semana2 | ... | Total
+    const headers=['Empresa','Código Conta','Cliente',...todasSemanas,'Total Geral'];
+    const rows=Object.values(clienteMap).map(c=>{
+      const totalGeral=todasSemanas.reduce((s,sem)=>s+(c.semanas[sem]||0),0);
+      return[
+        c.empresa,
+        c.conta,
+        c.cliente,
+        ...todasSemanas.map(sem=>c.semanas[sem]||0),
+        totalGeral
+      ];
+    }).sort((a,b)=>b[b.length-1]-a[a.length-1]); // ordena por total desc
+    // Gera Excel via XLSX
+    const wsData=[headers,...rows];
+    const ws=XLSX.utils.aoa_to_sheet(wsData);
+    // Larguras das colunas
+    ws['!cols']=[{wch:30},{wch:12},{wch:40},...todasSemanas.map(()=>({wch:18})),{wch:12}];
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'Análise de Bases');
+    // Segunda aba: só os críticos
+    const criticos=rows.filter(r=>{const ult=r[r.length-2];return ult>10;}); // última semana > 10
+    if(criticos.length>0){
+      const wsCrit=XLSX.utils.aoa_to_sheet([headers,...criticos]);
+      wsCrit['!cols']=ws['!cols'];
+      XLSX.utils.book_append_sheet(wb,wsCrit,'Críticos');
+    }
+    XLSX.writeFile(wb,'analise_bases_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'-')+'.xlsx');
+  };
   const handleFile=(e)=>{
     const file=e.target.files[0];if(!file)return;const reader=new FileReader();
     reader.onload=(ev)=>{try{
@@ -4584,6 +4625,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
         <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
           {weeks.map((wk,i)=>(<button key={i} onClick={()=>{setCw(i);setTab('c');setPage(0);setSearch('');setEmpFil('');setSoloPI(false);}} style={{padding:'5px 13px',borderRadius:20,border:'1px solid',fontSize:12,cursor:'pointer',borderColor:i===cw?'#a78bfa':'rgba(255,255,255,0.1)',background:i===cw?'rgba(167,139,250,0.15)':'rgba(255,255,255,0.04)',color:i===cw?'#a78bfa':'rgba(255,255,255,0.4)',fontWeight:i===cw?700:400}}>{wk.label}</button>))}
           <label style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(167,139,250,0.1)',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>📥 Importar semana<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/></label>
+          {weeks.length>0&&<button onClick={exportarExcel} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.08)',color:'#34d399',fontSize:12,fontWeight:600,cursor:'pointer'}}>⬇ Exportar Excel</button>}
           {weeks.length>0&&<button onClick={limpar} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(239,68,68,0.35)',background:'rgba(239,68,68,0.07)',color:'#f87171',fontSize:12,fontWeight:600,cursor:'pointer'}}>🗑 Limpar</button>}
         </div>
       </div>
