@@ -6,6 +6,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -4187,6 +4188,7 @@ async function sbCarregarTratativas(sb,conta,empresa) {
 function BaseAtivaTab({supabaseClient, onRefresh}) {
   const [baseRows,setBaseRows]=React.useState(()=>{try{return JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{return[];}});
   const [search,setSearch]=React.useState('');const [page,setPage]=React.useState(0);const [msg,setMsg]=React.useState('');const [sbStatus,setSbStatus]=React.useState('');const PS=20;
+  const [filialFil,setFilialFil]=React.useState('Todas');const [rotaFil,setRotaFil]=React.useState('Todas');
   const [editando,setEditando]=React.useState(null); // linha sendo editada
   const [editForm,setEditForm]=React.useState({});
   const saveBase=async(rows)=>{
@@ -4238,7 +4240,16 @@ function BaseAtivaTab({supabaseClient, onRefresh}) {
     }catch(err){setMsg('err:'+err.message);}};
     reader.readAsArrayBuffer(file);e.target.value='';
   };
-  const filtered=baseRows.filter(r=>{if(!search)return true;const q=search.toLowerCase();return(r.cliente||'').toLowerCase().includes(q)||(r.conta||'').toLowerCase().includes(q)||(r.empresa||'').toLowerCase().includes(q);});
+  const normEmp=(e)=>(e||'').replace(/^\d+\.\s*/,'').trim().toUpperCase();
+  const filiaisDisp=React.useMemo(()=>{const s=new Set();baseRows.forEach(r=>{const n=normEmp(r.empresa);if(n)s.add(n);});return['Todas',...Array.from(s).sort()];},[baseRows]);
+  const rotasDisp=React.useMemo(()=>{const s=new Set();baseRows.forEach(r=>{const a=(r.area||'').trim().toUpperCase();if(a)s.add(a);});return['Todas',...Array.from(s).sort(),'Sem rota'];},[baseRows]);
+  const filtered=baseRows.filter(r=>{
+    if(filialFil!=='Todas'&&normEmp(r.empresa)!==filialFil.toUpperCase())return false;
+    const ar=(r.area||'').trim().toUpperCase();
+    if(rotaFil==='Sem rota'){if(ar)return false;}
+    else if(rotaFil!=='Todas'&&ar!==rotaFil.toUpperCase())return false;
+    if(!search)return true;const q=search.toLowerCase();return(r.cliente||'').toLowerCase().includes(q)||(r.conta||'').toLowerCase().includes(q)||(r.empresa||'').toLowerCase().includes(q);
+  });
   const total=filtered.length,start=page*PS,pageRows=filtered.slice(start,start+PS);
   const inp={padding:'7px 12px',borderRadius:9,border:'1px solid rgba(255,255,255,0.1)',background:'rgba(255,255,255,0.05)',color:'#fff',fontSize:13,outline:'none'};
   const isOk=msg.startsWith('ok:');const msgText=msg.replace(/^(ok|err):/,'');
@@ -4256,11 +4267,16 @@ function BaseAtivaTab({supabaseClient, onRefresh}) {
       {baseRows.length===0?(<div style={{background:'rgba(255,255,255,0.02)',border:'2px dashed rgba(255,255,255,0.08)',borderRadius:16,padding:'56px 24px',textAlign:'center'}}><div style={{fontSize:44,marginBottom:14,opacity:.15}}>🗂</div><div style={{fontSize:15,fontWeight:600,color:'rgba(255,255,255,0.3)',marginBottom:8}}>Nenhuma base importada</div><div style={{fontSize:12,color:'rgba(255,255,255,0.18)',lineHeight:1.8}}>Importe um .xlsx com: <code style={{color:'rgba(6,182,212,0.7)',fontSize:11}}>Empresa · Conta · Cliente · Mensalidade · Status · Área · Cidade · Bairro</code></div></div>):(
       <React.Fragment>
         <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:20}}>
-          {[['Total',baseRows.length,'#06b6d4'],['Ativos',baseRows.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],['Com mensalidade',baseRows.filter(r=>r.mensalidade&&r.mensalidade!=='0'&&r.mensalidade!=='').length,'#fbbf24'],['Portaria',baseRows.filter(r=>(r.cliente||'').toUpperCase().includes('PORTARIA')).length,'#a78bfa']].map(([l,v,c])=>(
+          {[['Total',filtered.length,'#06b6d4'],['Ativos',filtered.filter(r=>(r.status||'').toLowerCase().includes('ativo')).length,'#34d399'],['Com mensalidade',filtered.filter(r=>r.mensalidade&&r.mensalidade!=='0'&&r.mensalidade!=='').length,'#fbbf24'],['Portaria',filtered.filter(r=>(r.cliente||'').toUpperCase().includes('PORTARIA')).length,'#a78bfa']].map(([l,v,c])=>(
             <div key={l} style={{borderRadius:14,padding:'14px 18px',border:'1px solid rgba(255,255,255,0.07)',background:'rgba(255,255,255,0.03)'}}><div style={{fontSize:11,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',marginBottom:6}}>{l}</div><div style={{fontSize:28,fontWeight:700,color:c}}>{v.toLocaleString('pt-BR')}</div></div>
           ))}
         </div>
-        <div style={{marginBottom:12}}><input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="🔍 Buscar cliente, conta ou empresa..." style={{...inp,width:'100%',maxWidth:440}}/></div>
+        <div style={{marginBottom:12,display:'flex',gap:10,flexWrap:'wrap',alignItems:'center'}}>
+          <input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}} placeholder="🔍 Buscar cliente, conta ou empresa..." style={{...inp,flex:1,minWidth:220,maxWidth:440}}/>
+          <select value={filialFil} onChange={e=>{setFilialFil(e.target.value);setPage(0);}} style={inp}>{filiaisDisp.map(f=><option key={f} value={f}>{f==='Todas'?'Todas as filiais':f}</option>)}</select>
+          <select value={rotaFil} onChange={e=>{setRotaFil(e.target.value);setPage(0);}} style={inp}>{rotasDisp.map(r=><option key={r} value={r}>{r==='Todas'?'Todas as rotas':r==='Sem rota'?'Sem rota':'Rota '+r}</option>)}</select>
+          {(filialFil!=='Todas'||rotaFil!=='Todas')&&<span style={{fontSize:12,color:'#06b6d4',fontWeight:600}}>{total.toLocaleString('pt-BR')} cliente(s)</span>}
+        </div>
         <div style={{background:'rgba(255,255,255,0.02)',border:'1px solid rgba(255,255,255,0.07)',borderRadius:14,overflow:'hidden'}}>
           <div className="table-scroll">
             <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
@@ -4399,6 +4415,7 @@ function AnaliseBases({supabaseClient, dispatches}) {
   const [search,setSearch]=React.useState('');
   const [empFil,setEmpFil]=React.useState('');
   const [filialFil,setFilialFil]=React.useState('Todas');
+  const [rotaFil,setRotaFil]=React.useState('Todas');
   const [soloPI,setSoloPI]=React.useState(false);
   const [page,setPage]=React.useState(0);
   const [modal,setModal]=React.useState(null);
@@ -4415,10 +4432,12 @@ function AnaliseBases({supabaseClient, dispatches}) {
       const dados=await sbCarregarSemanas(supabaseClient);
       if(dados&&dados.length>0){
         let baseAtiva=[];try{baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
+        const areaPorConta={};baseAtiva.forEach(b=>{const k=(b.conta||'').toLowerCase().trim();if(k&&b.area)areaPorConta[k]=(b.area||'').trim().toUpperCase();});
         const completadas=dados.map(w=>{
           const contasRel=new Set(w.rows.map(r=>(r.conta||'').toLowerCase().trim()));
-          const ausentes=baseAtiva.filter(b=>!contasRel.has((b.conta||'').toLowerCase().trim())).map(b=>({conta:(b.conta||'').trim(),empresa:(b.empresa||'').trim(),cliente:(b.cliente||'').trim(),eventos:0}));
-          return{label:w.label,rows:[...w.rows,...ausentes]};
+          const ausentes=baseAtiva.filter(b=>!contasRel.has((b.conta||'').toLowerCase().trim())).map(b=>({conta:(b.conta||'').trim(),empresa:(b.empresa||'').trim(),cliente:(b.cliente||'').trim(),area:(b.area||'').trim().toUpperCase(),eventos:0}));
+          const rowsComArea=w.rows.map(r=>({...r,area:r.area||areaPorConta[(r.conta||'').toLowerCase().trim()]||''}));
+          return{label:w.label,rows:[...rowsComArea,...ausentes]};
         });
         setWeeks(completadas);setCw(completadas.length-1);
       }
@@ -4433,9 +4452,14 @@ function AnaliseBases({supabaseClient, dispatches}) {
       // Compara normalizando para evitar problema com prefixo "7. "
       r=r.filter(x=>normEmpresa(x.empresa)===filialFil.toUpperCase());
     }
+    if(rotaFil!=='Todas'){
+      const ar=(x)=>(x.area||'').trim().toUpperCase();
+      if(rotaFil==='Sem rota')r=r.filter(x=>!ar(x));
+      else r=r.filter(x=>ar(x)===rotaFil.toUpperCase());
+    }
     if(soloPI) r=r.filter(x=>(x.cliente||'').toUpperCase().includes('PORTARIA'));
     return r;
-  },[filialFil,soloPI]);
+  },[filialFil,rotaFil,soloPI]);
 
   const getTotals=(rows)=>{
     const f=filtrarRows(rows);
@@ -4453,6 +4477,12 @@ function AnaliseBases({supabaseClient, dispatches}) {
       }
     }));
     return['Todas',...Array.from(s).sort()];
+  },[weeks]);
+
+  const rotasDisponiveis=React.useMemo(()=>{
+    const s=new Set();
+    weeks.forEach(w=>w.rows.forEach(r=>{const a=(r.area||'').trim().toUpperCase();if(a)s.add(a);}));
+    return['Todas',...Array.from(s).sort(),'Sem rota'];
   },[weeks]);
 
   const getEvo=(conta,ci)=>{
@@ -4671,6 +4701,10 @@ function AnaliseBases({supabaseClient, dispatches}) {
           <select value={filialFil} onChange={e=>{setFilialFil(e.target.value);setPage(0);}}
             style={{padding:'6px 12px',borderRadius:10,border:filialFil!=='Todas'?'1px solid rgba(56,189,248,0.5)':'1px solid rgba(255,255,255,0.15)',background:filialFil!=='Todas'?'rgba(56,189,248,0.1)':'rgba(255,255,255,0.05)',color:filialFil!=='Todas'?'#38bdf8':'rgba(255,255,255,0.6)',fontSize:12,outline:'none',cursor:'pointer',fontWeight:filialFil!=='Todas'?700:400}}>
             {filiaisDisponiveis.map(f=><option key={f} value={f}>{f==='Todas'?'🏢 Todas as filiais':f.replace(/^\d+\.\s/,'')}</option>)}
+          </select>
+          <select value={rotaFil} onChange={e=>{setRotaFil(e.target.value);setPage(0);}}
+            style={{padding:'6px 12px',borderRadius:10,border:rotaFil!=='Todas'?'1px solid rgba(52,211,153,0.5)':'1px solid rgba(255,255,255,0.15)',background:rotaFil!=='Todas'?'rgba(52,211,153,0.1)':'rgba(255,255,255,0.05)',color:rotaFil!=='Todas'?'#34d399':'rgba(255,255,255,0.6)',fontSize:12,outline:'none',cursor:'pointer',fontWeight:rotaFil!=='Todas'?700:400}}>
+            {rotasDisponiveis.map(r=><option key={r} value={r}>{r==='Todas'?'🚚 Todas as rotas':r==='Sem rota'?'Sem rota':'Rota '+r}</option>)}
           </select>
           <label style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(167,139,250,0.4)',background:'rgba(167,139,250,0.1)',color:'#a78bfa',fontSize:12,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',gap:6}}>📥 Importar semana<input type="file" accept=".xlsx,.xls" style={{display:'none'}} onChange={handleFile}/></label>
           {weeks.length>0&&<button onClick={exportarExcel} style={{padding:'7px 14px',borderRadius:10,border:'1px solid rgba(52,211,153,0.4)',background:'rgba(52,211,153,0.08)',color:'#34d399',fontSize:12,fontWeight:600,cursor:'pointer'}}>⬇ Exportar Excel</button>}
@@ -5027,8 +5061,11 @@ function App() {
         portaria_inteligente:Boolean(d.portaria_inteligente),
       })).filter(d=>d.codigo_cliente&&d.filial);
       const clientesExistentes=new Set(clients.map(c=>`${c.codigo_cliente}||${c.filial}`));
+      // Mapa conta -> area vindo da Base Ativa, para herdar a rota automaticamente
+      let _baseAtiva=[];try{_baseAtiva=JSON.parse(localStorage.getItem('vtr_base_ativa')||'[]');}catch{}
+      const areaPorConta={};_baseAtiva.forEach(b=>{const k=(b.conta||'').toLowerCase().trim();if(k&&b.area)areaPorConta[k]=(b.area||'').trim().toUpperCase();});
       const novosClientesMap={};
-      for(const d of sanitized){if(!d.portaria_inteligente&&d.codigo_cliente&&d.filial){const key=`${d.codigo_cliente}||${d.filial}`;if(!clientesExistentes.has(key)&&!novosClientesMap[key]){const nomeFallback=(d.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim()||d.codigo_cliente;novosClientesMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nomeFallback,filial:d.filial,mensalidade:0,status:"ativo"};}}}
+      for(const d of sanitized){if(!d.portaria_inteligente&&d.codigo_cliente&&d.filial){const key=`${d.codigo_cliente}||${d.filial}`;if(!clientesExistentes.has(key)&&!novosClientesMap[key]){const nomeFallback=(d.nome_cliente||"").replace(/\(PORTARIA INTELIGENTE\)\s*[-–]?\s*/i,"").trim()||d.codigo_cliente;const areaHerdada=areaPorConta[(d.codigo_cliente||'').toLowerCase().trim()]||"";novosClientesMap[key]={codigo_cliente:d.codigo_cliente,nome_cliente:nomeFallback,filial:d.filial,mensalidade:0,status:"ativo",...(areaHerdada?{area:areaHerdada}:{})};}}}
       const novosClientes=Object.values(novosClientesMap);
       if(novosClientes.length>0){for(let i=0;i<novosClientes.length;i+=500)await supabaseClient.from("clients").upsert(novosClientes.slice(i,i+500),{onConflict:"codigo_cliente,filial"});}
       // Dedup: busca só os dispatches do mesmo período do arquivo (evita timeout)
