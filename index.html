@@ -4860,6 +4860,53 @@ function AnaliseDeslocamentosTab({ dispatches, mesFiltro, setMesFiltro, mesesTod
     return filialFiltro === "Todas" ? dispatchesMes : dispatchesMes.filter(d => d.filial === filialFiltro);
   }, [dispatchesMes, filialFiltro]);
 
+  // -- Ranking de clientes combinando TODOS os meses (independe do filtro de mês, só respeita a filial) --
+  const rankingClientes = useMemo(() => {
+    const baseTodos = filialFiltro === "Todas" ? dispatches : dispatches.filter(d => d.filial === filialFiltro);
+    if (baseTodos.length === 0) return null;
+
+    const totalPorCliente = {};
+    const porMes = {};
+
+    for (const d of baseTodos) {
+      const chave = `${d.codigo_cliente}||${d.filial}`;
+      const nome = d.nome_cliente || d.codigo_cliente;
+      if (!totalPorCliente[chave]) totalPorCliente[chave] = { chave, nome, filial: d.filial, total: 0 };
+      totalPorCliente[chave].total++;
+
+      const dt = parseDataHora(d.data_hora);
+      const mk = dt ? getMonthKey(dt) : null;
+      if (!mk) continue;
+      if (!porMes[mk]) porMes[mk] = {};
+      if (!porMes[mk][chave]) porMes[mk][chave] = { chave, nome, total: 0 };
+      porMes[mk][chave].total++;
+    }
+
+    const rankingGeral = Object.values(totalPorCliente).sort((a, b) => b.total - a.total).slice(0, 10);
+
+    const mesesOrdenados = Object.keys(porMes).sort();
+    const top5PorMes = mesesOrdenados.map(mk => ({
+      mes: mk,
+      top: Object.values(porMes[mk]).sort((a, b) => b.total - a.total).slice(0, 5),
+    }));
+
+    const recorrenciaMap = {};
+    for (const { mes, top } of top5PorMes) {
+      top.forEach((c, idx) => {
+        if (!recorrenciaMap[c.chave]) {
+          recorrenciaMap[c.chave] = { nome: c.nome, mesesTop5: [], vezesTop1: 0, totalGeral: totalPorCliente[c.chave]?.total || 0 };
+        }
+        recorrenciaMap[c.chave].mesesTop5.push(monthLabel(mes));
+        if (idx === 0) recorrenciaMap[c.chave].vezesTop1++;
+      });
+    }
+    const recorrentes = Object.values(recorrenciaMap)
+      .filter(c => c.mesesTop5.length >= 2)
+      .sort((a, b) => b.mesesTop5.length - a.mesesTop5.length || b.totalGeral - a.totalGeral);
+
+    return { rankingGeral, top5PorMes, recorrentes, totalMesesAnalisados: mesesOrdenados.length };
+  }, [dispatches, filialFiltro]);
+
   const analise = useMemo(() => {
     if (base.length === 0) return null;
 
@@ -4986,6 +5033,7 @@ function AnaliseDeslocamentosTab({ dispatches, mesFiltro, setMesFiltro, mesesTod
           <TabBtn active={segmento==="geral"} onClick={()=>setSegmento("geral")} accent="#818cf8">Visão geral</TabBtn>
           <TabBtn active={segmento==="portaria"} onClick={()=>setSegmento("portaria")} accent="#a78bfa">Portaria Inteligente</TabBtn>
           <TabBtn active={segmento==="cftv"} onClick={()=>setSegmento("cftv")} accent="#34d399">CFTV x Sem CFTV</TabBtn>
+          <TabBtn active={segmento==="recorrencia"} onClick={()=>setSegmento("recorrencia")} accent="#f472b6">Recorrência de clientes</TabBtn>
         </div>
       </div>
 
@@ -5028,6 +5076,69 @@ function AnaliseDeslocamentosTab({ dispatches, mesFiltro, setMesFiltro, mesesTod
             </div>
           </Card>
         </div>
+      )}
+
+      {segmento==="recorrencia" && (
+        rankingClientes ? (
+          <div style={{ display:"grid",gap:16,marginBottom:16 }}>
+            <Card style={{ padding:20 }}>
+              <SectionLabel>Ranking geral — todos os meses combinados</SectionLabel>
+              <p style={{ fontSize:11,color:"rgba(255,255,255,0.3)",margin:"-8px 0 12px" }}>
+                {rankingClientes.totalMesesAnalisados} {rankingClientes.totalMesesAnalisados===1?"mês":"meses"} com dados · top 10 clientes por total de deslocamentos, independente do filtro de mês acima
+              </p>
+              <BarChart
+                data={rankingClientes.rankingGeral.map(c=>({ label:c.nome.length>30?c.nome.slice(0,30)+"…":c.nome, value:c.total }))}
+                label="Deslocamentos"
+                height={Math.max(220, rankingClientes.rankingGeral.length*36)}
+              />
+            </Card>
+
+            <Card>
+              <div style={{ borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"16px 20px" }}>
+                <SectionLabel>Clientes recorrentes no Top 5</SectionLabel>
+                <p style={{ fontSize:11,color:"rgba(255,255,255,0.25)",margin:"-8px 0 0" }}>
+                  Clientes que apareceram entre os 5 que mais deslocaram em pelo menos 2 meses diferentes — ajuda a distinguir problema recorrente de pico isolado
+                </p>
+              </div>
+              {rankingClientes.recorrentes.length===0 ? (
+                <div style={{ padding:"40px 20px",textAlign:"center",color:"rgba(255,255,255,0.25)",fontSize:13 }}>
+                  {rankingClientes.totalMesesAnalisados<2
+                    ? "É preciso pelo menos 2 meses com dados para comparar recorrência."
+                    : "Nenhum cliente se repetiu no Top 5 em mais de um mês — os picos de deslocamento estão distribuídos entre clientes diferentes."}
+                </div>
+              ) : (
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%",borderCollapse:"collapse",fontSize:13 }}>
+                    <thead>
+                      <tr style={{ borderBottom:"1px solid rgba(255,255,255,0.05)" }}>
+                        {["Cliente","Meses no Top 5","Vezes em 1º lugar","Total no período","Meses"].map(h=>(
+                          <th key={h} style={{ padding:"12px 16px",textAlign:h==="Cliente"||h==="Meses"?"left":"right",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(255,255,255,0.25)" }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rankingClientes.recorrentes.map((c,i)=>(
+                        <tr key={c.nome+i} style={{ borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                          <td style={{ padding:"13px 16px",fontWeight:600,color:"#f472b6" }}>{c.nome}</td>
+                          <td style={{ padding:"13px 16px",textAlign:"right",fontWeight:700,color:"#fff" }}>{c.mesesTop5.length}</td>
+                          <td style={{ padding:"13px 16px",textAlign:"right" }}>
+                            {c.vezesTop1>0
+                              ? <span style={{ fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:99,background:"rgba(244,63,94,0.15)",color:"#f43f5e",border:"1px solid rgba(244,63,94,0.3)" }}>🥇 {c.vezesTop1}x</span>
+                              : <span style={{ color:"rgba(255,255,255,0.25)" }}>—</span>}
+                          </td>
+                          <td style={{ padding:"13px 16px",textAlign:"right",fontWeight:700,color:"#818cf8" }}>{c.totalGeral}</td>
+                          <td style={{ padding:"13px 16px",color:"rgba(255,255,255,0.4)",fontSize:11 }}>{c.mesesTop5.join(", ")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        ) : (
+          <EmptyState icon="🔁" title="Sem dados suficientes" sub="Importe deslocamentos de pelo menos um mês para comparar recorrência de clientes." />
+        )
       )}
 
       <div style={{ marginTop:8, fontSize:11, color:"rgba(255,255,255,0.3)", lineHeight:1.6 }}>
