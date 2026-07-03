@@ -7,6 +7,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -4821,6 +4822,224 @@ function AnaliseBases({supabaseClient, dispatches}) {
   );
 }
 
+function getHoraDataHora(dataHoraStr) {
+  const m = String(dataHoraStr || "").match(/(\d{2}):(\d{2})/);
+  return m ? parseInt(m[1], 10) : null;
+}
+function getTurno(hora) {
+  if (hora === null) return null;
+  if (hora >= 0 && hora < 6) return "Madrugada (00h–06h)";
+  if (hora >= 6 && hora < 12) return "Manhã (06h–12h)";
+  if (hora >= 12 && hora < 18) return "Tarde (12h–18h)";
+  return "Noite (18h–24h)";
+}
+const DIAS_SEMANA_ORDEM = ["Domingo","Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado"];
+function getCategoriaCliente(d) {
+  if (d.portaria_inteligente) return "Portaria Inteligente";
+  if (String(d.nome_cliente || "").toUpperCase().includes("CFTV")) return "CFTV";
+  return "Sem CFTV";
+}
+
+function AnaliseDeslocamentosTab({ dispatches, mesFiltro, setMesFiltro, mesesTodos }) {
+  const [filialFiltro, setFilialFiltro] = useState("Todas");
+  const [segmento, setSegmento] = useState("geral");
+
+  const mesFiltroEfetivo = mesesTodos.includes(mesFiltro) ? mesFiltro : "Todos";
+
+  const dispatchesMes = useMemo(() => {
+    if (mesFiltroEfetivo === "Todos") return dispatches;
+    return dispatches.filter(d => {
+      const dt = parseDataHora(d.data_hora);
+      return dt && getMonthKey(dt) === mesFiltroEfetivo;
+    });
+  }, [dispatches, mesFiltroEfetivo]);
+
+  const filiaisDisponiveis = useMemo(() => ["Todas", ...new Set(dispatchesMes.map(d => d.filial).filter(Boolean))], [dispatchesMes]);
+
+  const base = useMemo(() => {
+    return filialFiltro === "Todas" ? dispatchesMes : dispatchesMes.filter(d => d.filial === filialFiltro);
+  }, [dispatchesMes, filialFiltro]);
+
+  const analise = useMemo(() => {
+    if (base.length === 0) return null;
+
+    const turnoMap = {};
+    const diaSemanaMap = {};
+    const viaturaMap = {};
+    const categoriaMap = { "Portaria Inteligente": 0, "CFTV": 0, "Sem CFTV": 0 };
+    const clientesPorCategoria = { "Portaria Inteligente": new Set(), "CFTV": new Set(), "Sem CFTV": new Set() };
+    const portariaEventoMap = {};
+    let portariaTotal = 0;
+
+    for (const d of base) {
+      const hora = getHoraDataHora(d.data_hora);
+      const turno = getTurno(hora);
+      if (turno) turnoMap[turno] = (turnoMap[turno] || 0) + 1;
+
+      const dt = parseDataHora(d.data_hora);
+      if (dt) {
+        const diaSemana = DIAS_SEMANA_ORDEM[dt.getDay()];
+        diaSemanaMap[diaSemana] = (diaSemanaMap[diaSemana] || 0) + 1;
+      }
+
+      if (d.viatura) viaturaMap[d.viatura] = (viaturaMap[d.viatura] || 0) + 1;
+
+      const categoria = getCategoriaCliente(d);
+      categoriaMap[categoria]++;
+      clientesPorCategoria[categoria].add(`${d.codigo_cliente}||${d.filial}`);
+
+      if (categoria === "Portaria Inteligente") {
+        portariaTotal++;
+        if (d.evento) portariaEventoMap[d.evento] = (portariaEventoMap[d.evento] || 0) + 1;
+        const turnoPi = turno;
+        if (turnoPi) portariaEventoMap["__turno__" + turnoPi] = (portariaEventoMap["__turno__" + turnoPi] || 0) + 1;
+      }
+    }
+
+    const porPeriodo = ["Madrugada (00h–06h)", "Manhã (06h–12h)", "Tarde (12h–18h)", "Noite (18h–24h)"]
+      .map(label => ({ label, value: turnoMap[label] || 0 }));
+
+    const porDiaSemana = DIAS_SEMANA_ORDEM.map(label => ({ label, value: diaSemanaMap[label] || 0 }));
+
+    const porViatura = Object.entries(viaturaMap).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+
+    const viaturaLider = porViatura[0] || null;
+    const periodoLider = porPeriodo.reduce((max, p) => p.value > (max?.value || 0) ? p : max, null);
+
+    const portariaPorTurno = ["Madrugada (00h–06h)", "Manhã (06h–12h)", "Tarde (12h–18h)", "Noite (18h–24h)"]
+      .map(label => ({ label, value: portariaEventoMap["__turno__" + label] || 0 }));
+
+    const portariaMotivos = Object.entries(portariaEventoMap)
+      .filter(([k]) => !k.startsWith("__turno__"))
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+    const top5 = portariaMotivos.slice(0, 5);
+    const outrosQtd = portariaMotivos.slice(5).reduce((s, m) => s + m.value, 0);
+    const portariaMotivosFinal = outrosQtd > 0 ? [...top5, { label: "Outros motivos", value: outrosQtd }] : top5;
+
+    const cftvComparativo = ["CFTV", "Sem CFTV"].map(cat => {
+      const qtd = categoriaMap[cat];
+      const clientesUnicos = clientesPorCategoria[cat].size;
+      return { categoria: cat, qtd, clientesUnicos, media: clientesUnicos > 0 ? Math.round((qtd / clientesUnicos) * 100) / 100 : 0 };
+    });
+
+    return {
+      total: base.length,
+      porPeriodo, porDiaSemana, porViatura, viaturaLider, periodoLider,
+      portariaTotal, portariaPorTurno, portariaMotivosFinal,
+      categoriaMap, cftvComparativo,
+    };
+  }, [base]);
+
+  if (!analise) {
+    return <EmptyState icon="🚦" title="Nenhum deslocamento encontrado" sub="Ajuste o período ou a filial, ou importe deslocamentos para ver esta análise." />;
+  }
+
+  const pctPortaria = ((analise.portariaTotal / analise.total) * 100).toFixed(1);
+  const pctCftv = ((analise.categoriaMap["CFTV"] / analise.total) * 100).toFixed(1);
+  const pctSemCftv = ((analise.categoriaMap["Sem CFTV"] / analise.total) * 100).toFixed(1);
+
+  return (
+    <div>
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8,flexWrap:"wrap",gap:16 }}>
+        <div>
+          <div style={{ fontSize:20,fontWeight:700 }}>🚦 Análise de Deslocamentos</div>
+          <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginTop:2 }}>Período, motivos e segmentação de clientes (Portaria Inteligente x CFTV x Sem CFTV)</div>
+        </div>
+      </div>
+
+      <MesFiltroBar value={mesFiltroEfetivo} onChange={setMesFiltro} meses={mesesTodos} accent="#818cf8" label="Mês" />
+
+      <div style={{ display:"flex",gap:8,marginBottom:20,flexWrap:"wrap" }}>
+        {filiaisDisponiveis.map(f => (
+          <FilterBtn key={f} active={filialFiltro===f} onClick={()=>setFilialFiltro(f)}>{f}</FilterBtn>
+        ))}
+      </div>
+
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:16,marginBottom:28 }}>
+        <KPICard label="Total de deslocamentos" value={analise.total.toLocaleString("pt-BR")} sub={mesFiltroEfetivo==="Todos"?"Todos os meses":monthLabel(mesFiltroEfetivo)} accent="#818cf8" icon="🚦" />
+        <KPICard label="Viatura líder" value={analise.viaturaLider?analise.viaturaLider.value:"—"} sub={analise.viaturaLider?analise.viaturaLider.label:"Sem dados"} accent="#38bdf8" icon="🚗" />
+        <KPICard label="Período com mais deslocamento" value={analise.periodoLider?analise.periodoLider.value:"—"} sub={analise.periodoLider?analise.periodoLider.label:"Sem dados"} accent="#fb923c" icon="🕒" />
+        <KPICard label="Portaria Inteligente" value={analise.portariaTotal.toLocaleString("pt-BR")} sub={`${pctPortaria}% do total`} accent="#a78bfa" icon="🏢" />
+      </div>
+
+      <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:28 }}>
+        <Card style={{ padding:20 }}>
+          <SectionLabel>Deslocamentos por período do dia</SectionLabel>
+          <BarChart data={analise.porPeriodo} label="Deslocamentos" />
+        </Card>
+        <Card style={{ padding:20 }}>
+          <SectionLabel>Deslocamentos por dia da semana</SectionLabel>
+          <BarChart data={analise.porDiaSemana} label="Deslocamentos" />
+        </Card>
+      </div>
+
+      <Card style={{ padding:20, marginBottom:28 }}>
+        <SectionLabel>Deslocamentos por viatura</SectionLabel>
+        <BarChart data={analise.porViatura} label="Eventos" height={Math.max(220, analise.porViatura.length*36)} />
+      </Card>
+
+      {/* Segmentação de clientes */}
+      <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:12 }}>
+        <div style={{ fontSize:15,fontWeight:700 }}>Segmentação por tipo de cliente</div>
+        <div style={{ display:"flex",gap:8 }}>
+          <TabBtn active={segmento==="geral"} onClick={()=>setSegmento("geral")} accent="#818cf8">Visão geral</TabBtn>
+          <TabBtn active={segmento==="portaria"} onClick={()=>setSegmento("portaria")} accent="#a78bfa">Portaria Inteligente</TabBtn>
+          <TabBtn active={segmento==="cftv"} onClick={()=>setSegmento("cftv")} accent="#34d399">CFTV x Sem CFTV</TabBtn>
+        </div>
+      </div>
+
+      {segmento==="geral" && (
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:16,marginBottom:28 }}>
+          <KPICard label="Portaria Inteligente" value={analise.categoriaMap["Portaria Inteligente"]} sub={`${pctPortaria}% do total`} accent="#a78bfa" icon="🏢" />
+          <KPICard label="Com CFTV" value={analise.categoriaMap["CFTV"]} sub={`${pctCftv}% do total`} accent="#34d399" icon="📷" />
+          <KPICard label="Sem CFTV" value={analise.categoriaMap["Sem CFTV"]} sub={`${pctSemCftv}% do total`} accent="#fb923c" icon="🚫" />
+        </div>
+      )}
+
+      {segmento==="portaria" && (
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16 }}>
+          <Card style={{ padding:20 }}>
+            <SectionLabel>Portaria Inteligente — por período</SectionLabel>
+            <DonutChart data={analise.portariaPorTurno} />
+          </Card>
+          <Card style={{ padding:20 }}>
+            <SectionLabel>Portaria Inteligente — principais motivos</SectionLabel>
+            <BarChart data={analise.portariaMotivosFinal} label="Ocorrências" height={Math.max(220, analise.portariaMotivosFinal.length*36)} />
+          </Card>
+        </div>
+      )}
+
+      {segmento==="cftv" && (
+        <div style={{ display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,marginBottom:16 }}>
+          <Card style={{ padding:20 }}>
+            <SectionLabel>Volume de deslocamentos (excluindo Portaria Inteligente)</SectionLabel>
+            <BarChart data={analise.cftvComparativo.map(c=>({label:c.categoria,value:c.qtd}))} label="Deslocamentos" />
+          </Card>
+          <Card style={{ padding:20 }}>
+            <SectionLabel>Média de deslocamentos por cliente</SectionLabel>
+            <BarChart data={analise.cftvComparativo.map(c=>({label:c.categoria,value:c.media}))} label="Média/cliente" />
+            <div style={{ display:"flex",gap:16,marginTop:12,flexWrap:"wrap" }}>
+              {analise.cftvComparativo.map(c=>(
+                <div key={c.categoria} style={{ fontSize:11,color:"rgba(255,255,255,0.4)" }}>
+                  <b style={{ color:"#fff" }}>{c.categoria}:</b> {c.clientesUnicos} clientes únicos
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      <div style={{ marginTop:8, fontSize:11, color:"rgba(255,255,255,0.3)", lineHeight:1.6 }}>
+        * Os tempos médios de atendimento (tempo até iniciar deslocamento, tempo até chegar no local) não aparecem
+        aqui porque o banco hoje guarda apenas um horário por deslocamento (Data de recepção). Para ativar essas
+        métricas é preciso ampliar a tabela <code>dispatches</code> com os horários de Deslocamento, Deslocamento
+        iniciado e No local vindos do relatório do Segware.
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -4841,7 +5060,7 @@ function App() {
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
-    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários"};
+    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","analiseDeslocamento":"Análise de Deslocamentos","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários"};
     document.title=`${nomes[aba]||"Dashboard"} — Central de Monitoramento VTR`;
   },[aba]);
 
@@ -4918,7 +5137,7 @@ function App() {
   useEffect(()=>{
     if(!usuario) return;
     const isAdminUser = usuario.perfil==="admin";
-    const abasDisponiveis = ["dashboard","portaria","filiais","mapa","comparativos","clientes","relatorios",...(isAdminUser?["importacao","usuarios"]:[])];
+    const abasDisponiveis = ["dashboard","portaria","analiseDeslocamento","filiais","mapa","comparativos","clientes","relatorios",...(isAdminUser?["importacao","usuarios"]:[])];
     const handler=(e)=>{
       // Não ativa se o foco está em input/textarea
       if(["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
@@ -5223,6 +5442,7 @@ function App() {
       <div className="tab-bar" style={{ display:"flex",gap:8,marginBottom:24,flexWrap:"wrap",alignItems:"center" }}>
         <TabBtn active={aba==="dashboard"} onClick={()=>setAba("dashboard")}>📊 Dashboard{aba==="dashboard"&&mesBadge}</TabBtn>
         <TabBtn active={aba==="portaria"} onClick={()=>setAba("portaria")} accent="#a78bfa">🏢 Portaria{piCount>0&&<span style={{ marginLeft:6,background:"rgba(167,139,250,0.2)",color:"#a78bfa",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{piCount}</span>}{aba==="portaria"&&mesBadge}</TabBtn>
+        <TabBtn active={aba==="analiseDeslocamento"} onClick={()=>setAba("analiseDeslocamento")} accent="#818cf8">🚦 Deslocamentos{aba==="analiseDeslocamento"&&mesBadge}</TabBtn>
         <TabBtn active={aba==="filiais"} onClick={()=>setAba("filiais")} accent="#06b6d4">🏢 Filiais</TabBtn>
         <TabBtn active={aba==="mapa"} onClick={()=>setAba("mapa")} accent="#f472b6">🔥 Mapa de Calor</TabBtn>
         <TabBtn active={aba==="comparativos"} onClick={()=>setAba("comparativos")} accent="#34d399">📅 Comparativos</TabBtn>
@@ -5247,6 +5467,7 @@ function App() {
       {aba==="clientes"&&<ClientesTab clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} isAdmin={isAdmin} />}
       {aba==="relatorios"&&<RelatoriosTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} />}
       {aba==="portaria"&&<PortariaTab dispatches={dispatches} clients={clients} supabaseClient={supabaseClient} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
+      {aba==="analiseDeslocamento"&&<AnaliseDeslocamentosTab dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
       {aba==="filiais"&&<FiliaisTab clients={clients} dispatches={dispatches} />}
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
