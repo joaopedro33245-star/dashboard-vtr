@@ -3169,6 +3169,9 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
   const [limparMesSel, setLimparMesSel] = React.useState("");
   const [limpando, setLimpando] = React.useState(false);
   const [msgLimpeza, setMsgLimpeza] = React.useState("");
+  const [limparSemanaSel, setLimparSemanaSel] = React.useState("");
+  const [limpandoSemana, setLimpandoSemana] = React.useState(false);
+  const [msgLimpezaSemana, setMsgLimpezaSemana] = React.useState("");
 
   const mesesNoBanco = React.useMemo(() => {
     const set = new Set();
@@ -3181,6 +3184,39 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
     });
     return Array.from(set).sort().reverse();
   }, [dispatches]);
+
+  const semanasNoBanco = React.useMemo(() => {
+    const set = new Set();
+    dispatches.forEach(d => {
+      const dt = parseDataHora(d.data_hora);
+      if(dt) { const wk = getWeekKey(dt); if(wk) set.add(wk); }
+    });
+    return Array.from(set).sort().reverse();
+  }, [dispatches]);
+
+  async function limparSemana() {
+    if(!limparSemanaSel) return;
+    if(!window.confirm(`Apagar TODOS os deslocamentos da semana de ${weekLabel(limparSemanaSel)}? Esta ação não pode ser desfeita.`)) return;
+    setLimpandoSemana(true); setMsgLimpezaSemana("");
+    try {
+      const idsParaDeletar = dispatches
+        .filter(d => {
+          const dt = parseDataHora(d.data_hora);
+          return dt && getWeekKey(dt) === limparSemanaSel;
+        })
+        .map(d => d.id).filter(Boolean);
+      if(idsParaDeletar.length === 0){ setMsgLimpezaSemana("❌ Nenhum registro encontrado para essa semana."); setLimpandoSemana(false); return; }
+      for(let i = 0; i < idsParaDeletar.length; i += 500) {
+        const { error } = await supabaseClient.from("dispatches").delete().in("id", idsParaDeletar.slice(i,i+500));
+        if(error) throw new Error(error.message);
+      }
+      setMsgLimpezaSemana(`✅ ${idsParaDeletar.length} registros da semana de ${weekLabel(limparSemanaSel)} removidos!`);
+      setLimparSemanaSel("");
+      try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+      if(typeof onRefresh === "function") onRefresh();
+    } catch(e) { setMsgLimpezaSemana("❌ Erro: " + e.message); }
+    setLimpandoSemana(false);
+  }
 
   async function limparMes() {
     if(!limparMesSel) return;
@@ -3248,6 +3284,24 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
             </button>
           </div>
           {msgLimpeza&&<div style={{ marginTop:10,padding:"8px 14px",borderRadius:9,background:msgLimpeza.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(239,68,68,0.1)",color:msgLimpeza.startsWith("✅")?"#34d399":"#f87171",fontSize:12,fontWeight:600 }}>{msgLimpeza}</div>}
+        </div>
+      )}
+      {dispatches.length > 0 && (
+        <div style={{ borderRadius:16,border:"1px solid rgba(239,68,68,0.2)",background:"rgba(239,68,68,0.04)",padding:20,marginBottom:20 }}>
+          <SectionLabel>🗑️ Limpar Deslocamentos por Semana</SectionLabel>
+          <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14 }}>Remove apenas os deslocamentos de uma semana específica — útil quando o erro foi só em parte do mês (ex: importou uma semana errada).</div>
+          <div style={{ display:"flex",gap:10,alignItems:"center",flexWrap:"wrap" }}>
+            <select value={limparSemanaSel} onChange={e=>setLimparSemanaSel(e.target.value)}
+              style={{ flex:1,minWidth:220,padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none" }}>
+              <option value="">— Selecione a semana —</option>
+              {semanasNoBanco.map(wk=><option key={wk} value={wk}>{weekLabel(wk)}</option>)}
+            </select>
+            <button onClick={limparSemana} disabled={!limparSemanaSel||limpandoSemana}
+              style={{ padding:"10px 20px",borderRadius:10,border:"none",background:limparSemanaSel?"#ef4444":"rgba(239,68,68,0.2)",color:limparSemanaSel?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:13,cursor:limparSemanaSel?"pointer":"not-allowed",opacity:limpandoSemana?0.6:1 }}>
+              {limpandoSemana?"Removendo…":"🗑️ Limpar semana selecionada"}
+            </button>
+          </div>
+          {msgLimpezaSemana&&<div style={{ marginTop:10,padding:"8px 14px",borderRadius:9,background:msgLimpezaSemana.startsWith("✅")?"rgba(52,211,153,0.1)":"rgba(239,68,68,0.1)",color:msgLimpezaSemana.startsWith("✅")?"#34d399":"#f87171",fontSize:12,fontWeight:600 }}>{msgLimpezaSemana}</div>}
         </div>
       )}
       <div style={card}>
