@@ -8,6 +8,7 @@
 
 
 
+
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -161,6 +162,20 @@ const STATUS_CONFIG = {
   "RISCO":     { bg:"#f59e0b20", text:"#fbbf24", border:"#f59e0b40", dot:"#fbbf24" },
   "SAUDÁVEL":  { bg:"#10b98120", text:"#34d399", border:"#10b98140", dot:"#34d399" },
   "SEM DADOS": { bg:"#ffffff10", text:"rgba(255,255,255,0.3)", border:"#ffffff15", dot:"rgba(255,255,255,0.2)" },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// SAÚDE DO CLIENTE — palavras-chave usadas para classificar o texto
+// livre do campo "Evento" de cada deslocamento. Se o seu sistema usa
+// outros termos para bateria/comunicação/armar, ajuste os regex abaixo.
+// ═══════════════════════════════════════════════════════════════
+const KEYWORDS_SAUDE = {
+  bateria: /bateria/i,
+  comunicacao: /comunica/i,
+  // cobre "armou", "armado", "armar", "arme", "desarmou", "desarme" etc,
+  // sem confundir com a palavra "alarme" (o \b antes de "arm" não bate
+  // dentro de "alarme", pois ali "arm" não começa numa borda de palavra)
+  arme: /\b(des)?arm(a|ou|ado|ada|amento|ar|e)?\b/i,
 };
 
 const obsCache = new Map();
@@ -355,6 +370,19 @@ function monthLabel(key) {
   if (!key) return "—";
   const [y,m] = key.split("-");
   return `${MESES_PT[parseInt(m)-1]}/${y}`;
+}
+
+// ── SAÚDE DO CLIENTE: conta, por cliente, quantos deslocamentos têm um
+// "Evento" que bate com o regex informado (ex: bateria, comunicação) ──
+function rankearPorPalavraChave(disps, regex, nomeMap, limite=15) {
+  const map = {};
+  for (const d of disps) {
+    if (!regex.test(d.evento || "")) continue;
+    const key = `${d.codigo_cliente}||${d.filial}`;
+    if (!map[key]) map[key] = { chave:key, nome:nomeMap[key]||d.nome_cliente||d.codigo_cliente, codigo:d.codigo_cliente, filial:d.filial, total:0 };
+    map[key].total++;
+  }
+  return Object.values(map).sort((a,b)=>b.total-a.total).slice(0,limite);
 }
 
 // ── MELHORIA 3: Skeleton loader para tabelas ──
@@ -5205,6 +5233,143 @@ function AnaliseDeslocamentosTab({ dispatches, mesFiltro, setMesFiltro, mesesTod
   );
 }
 
+// ── SAÚDE DO CLIENTE — cartão de ranking reutilizável (bateria / comunicação / sem armar) ──
+function RankingSaudeCard({ titulo, icone, accent, itens, metricaFn, subFn, vazioMsg }) {
+  return (
+    <Card>
+      <div style={{ borderBottom:"1px solid rgba(255,255,255,0.07)", padding:"16px 20px" }}>
+        <SectionLabel>{icone} {titulo}</SectionLabel>
+      </div>
+      {itens.length===0 ? (
+        <div style={{ padding:"40px 20px", textAlign:"center", color:"rgba(255,255,255,0.25)", fontSize:13 }}>
+          {vazioMsg || "Nenhum cliente encontrado com esse tipo de evento no período."}
+        </div>
+      ) : (
+        <div>
+          {itens.map((c,i) => (
+            <div key={c.chave} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 20px", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+              <div style={{ width:24, fontSize:12, fontWeight:800, color: i<3?accent:"rgba(255,255,255,0.25)" }}>{i+1}º</div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.nome}</div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,0.3)", fontFamily:"monospace" }}>{c.codigo} · {c.filial}</div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:14, fontWeight:800, color:accent }}>{metricaFn(c)}</div>
+                {subFn && <div style={{ fontSize:10, color:"rgba(255,255,255,0.3)", whiteSpace:"nowrap" }}>{subFn(c)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SaudeClienteTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos }) {
+  const mesFiltroEfetivo = mesesTodos.includes(mesFiltro) ? mesFiltro : "Todos";
+
+  const dispatchesMes = useMemo(() => {
+    if (mesFiltroEfetivo === "Todos") return dispatches;
+    return dispatches.filter(d => {
+      const dt = parseDataHora(d.data_hora);
+      return dt && getMonthKey(dt) === mesFiltroEfetivo;
+    });
+  }, [dispatches, mesFiltroEfetivo]);
+
+  // Nome "oficial" do cadastro do cliente, com fallback pro nome que veio no deslocamento
+  const nomeMap = useMemo(() => {
+    const m = {};
+    for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.nome_cliente || c.codigo_cliente;
+    return m;
+  }, [clients]);
+
+  // Só considera clientes ativos no ranking de "sem armar" (cliente cancelado não é problema de saúde)
+  const statusAtivoMap = useMemo(() => {
+    const m = {};
+    for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.status !== "inativo";
+    return m;
+  }, [clients]);
+
+  // ── Top clientes por falha de bateria — respeita o filtro de mês/período do topo ──
+  const rankingBateria = useMemo(() => rankearPorPalavraChave(dispatchesMes, KEYWORDS_SAUDE.bateria, nomeMap), [dispatchesMes, nomeMap]);
+
+  // ── Top clientes por falha de comunicação — respeita o filtro de mês/período do topo ──
+  const rankingComunicacao = useMemo(() => rankearPorPalavraChave(dispatchesMes, KEYWORDS_SAUDE.comunicacao, nomeMap), [dispatchesMes, nomeMap]);
+
+  // ── Clientes sem armar há mais tempo — usa SEMPRE o histórico completo (ignora o filtro de
+  // mês acima), porque essa lista é sobre "há quantos dias não vemos um evento de armar/desarmar
+  // desse cliente", e restringir a um único mês quase sempre esvaziaria a lista ──
+  const rankingSemArmar = useMemo(() => {
+    const porCliente = {};
+    for (const d of dispatches) {
+      if (!KEYWORDS_SAUDE.arme.test(d.evento || "")) continue;
+      const dt = parseDataHora(d.data_hora);
+      if (!dt) continue;
+      const key = `${d.codigo_cliente}||${d.filial}`;
+      if (statusAtivoMap[key] === false) continue;
+      if (!porCliente[key]) porCliente[key] = { chave:key, nome:nomeMap[key]||d.nome_cliente||d.codigo_cliente, codigo:d.codigo_cliente, filial:d.filial, ultimaData:dt, totalEventos:0 };
+      if (dt > porCliente[key].ultimaData) porCliente[key].ultimaData = dt;
+      porCliente[key].totalEventos++;
+    }
+    const hoje = new Date();
+    return Object.values(porCliente)
+      .map(c => ({ ...c, diasSemArmar: Math.max(0, Math.floor((hoje - c.ultimaData) / 86400000)) }))
+      .sort((a,b) => b.diasSemArmar - a.diasSemArmar)
+      .slice(0, 15);
+  }, [dispatches, nomeMap, statusAtivoMap]);
+
+  if (dispatches.length === 0) {
+    return <EmptyState icon="💚" title="Sem deslocamentos importados" sub="Importe os deslocamentos para ver a saúde dos clientes (bateria, comunicação e clientes sem armar)." />;
+  }
+
+  return (
+    <div>
+      <MesFiltroBar value={mesFiltro} onChange={setMesFiltro} meses={mesesTodos} accent="#f87171" label="Período (bateria e comunicação)" />
+
+      <div className="grid-4" style={{ marginBottom:20 }}>
+        <KPICard label="Falhas de Bateria" value={rankingBateria.reduce((s,c)=>s+c.total,0)} sub={`${rankingBateria.length} cliente${rankingBateria.length===1?"":"s"} afetado${rankingBateria.length===1?"":"s"}`} icon="🔋" accent="#fbbf24" />
+        <KPICard label="Falhas de Comunicação" value={rankingComunicacao.reduce((s,c)=>s+c.total,0)} sub={`${rankingComunicacao.length} cliente${rankingComunicacao.length===1?"":"s"} afetado${rankingComunicacao.length===1?"":"s"}`} icon="📡" accent="#38bdf8" />
+        <KPICard label="Sem Armar +7 dias" value={rankingSemArmar.filter(c=>c.diasSemArmar>=7).length} sub="clientes com risco de abandono" icon="🔓" accent="#f87171" />
+        <KPICard label="Sem Armar +30 dias" value={rankingSemArmar.filter(c=>c.diasSemArmar>=30).length} sub="atenção redobrada" icon="⚠️" accent="#f43f5e" />
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))", gap:16, marginBottom:16 }}>
+        <RankingSaudeCard
+          titulo="Top clientes — Falha de Bateria"
+          icone="🔋" accent="#fbbf24"
+          itens={rankingBateria}
+          metricaFn={c=>c.total}
+          subFn={c=>`${c.total} ocorrência${c.total===1?"":"s"}`}
+        />
+        <RankingSaudeCard
+          titulo="Top clientes — Falha de Comunicação"
+          icone="📡" accent="#38bdf8"
+          itens={rankingComunicacao}
+          metricaFn={c=>c.total}
+          subFn={c=>`${c.total} ocorrência${c.total===1?"":"s"}`}
+        />
+      </div>
+
+      <RankingSaudeCard
+        titulo="Clientes sem armar há mais tempo"
+        icone="🔓" accent="#f87171"
+        itens={rankingSemArmar}
+        metricaFn={c=>`${c.diasSemArmar}d`}
+        subFn={c=>`desde ${c.ultimaData.toLocaleDateString("pt-BR")} · ${c.totalEventos} evento${c.totalEventos===1?"":"s"} no histórico`}
+        vazioMsg='Nenhum cliente ativo com evento de armar/desarmar no histórico. Se o texto do "Evento" no seu sistema usa outra palavra para isso, me avise para eu ajustar a classificação.'
+      />
+
+      <div style={{ marginTop:16, fontSize:11, color:"rgba(255,255,255,0.3)", lineHeight:1.6 }}>
+        * Essas listas são calculadas a partir do texto do campo "Evento" de cada deslocamento: bateria conta quem
+        tem "bateria" no evento, comunicação conta quem tem "comunica…" no evento, e o ranking de "sem armar" olha
+        a data do último evento de armar/desarmar de cada cliente (por isso ignora o filtro de período acima — ele
+        olha sempre o histórico completo). Se os textos de evento do seu sistema usarem outras palavras, me avise
+        para eu ajustar a classificação (ela está isolada em <code>KEYWORDS_SAUDE</code>, no topo do arquivo).
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [usuario,setUsuario]=useState(null);const [checkingAuth,setCheckingAuth]=useState(true);const [aba,setAba]=useState("dashboard");
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
@@ -5225,7 +5390,7 @@ function App() {
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
-    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","analiseDeslocamento":"Análise de Deslocamentos","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários"};
+    const nomes={"dashboard":"Dashboard","portaria":"Portaria Inteligente","analiseDeslocamento":"Análise de Deslocamentos","filiais":"Painel de Filiais","mapa":"Mapa de Calor","comparativos":"Comparativos","clientes":"Clientes","relatorios":"Relatórios","importacao":"Importação","usuarios":"Usuários","saudeCliente":"Saúde do Cliente"};
     document.title=`${nomes[aba]||"Dashboard"} — Central de Monitoramento VTR`;
   },[aba]);
 
@@ -5613,6 +5778,7 @@ function App() {
         <TabBtn active={aba==="comparativos"} onClick={()=>setAba("comparativos")} accent="#34d399">📅 Comparativos</TabBtn>
         <TabBtn active={aba==="clientes"} onClick={()=>setAba("clientes")} accent="#34d399">👥 Clientes{clients.length>0&&<span style={{ marginLeft:6,background:"rgba(52,211,153,0.2)",color:"#34d399",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{clients.length}</span>}</TabBtn>
         <TabBtn active={aba==="relatorios"} onClick={()=>setAba("relatorios")} accent="#fb923c">📋 Relatórios{aba==="relatorios"&&mesBadge}</TabBtn>
+        <TabBtn active={aba==="saudeCliente"} onClick={()=>setAba("saudeCliente")} accent="#f87171">💚 Saúde do Cliente</TabBtn>
         {isAdmin&&<TabBtn active={aba==="importacao"} onClick={()=>setAba("importacao")}>📥 Importação{clients.length>0&&<span style={{ marginLeft:6,background:"rgba(56,189,248,0.2)",color:"#38bdf8",borderRadius:999,padding:"1px 7px",fontSize:10 }}>{clients.length}</span>}</TabBtn>}
         {isAdmin&&<TabBtn active={aba==="usuarios"} onClick={()=>setAba("usuarios")} accent="#f87171">👑 Usuários</TabBtn>}
         <TabBtn active={aba==="baseAtiva"} onClick={()=>setAba("baseAtiva")} accent="#06b6d4">🗂️ Base Ativa</TabBtn>
@@ -5636,6 +5802,7 @@ function App() {
       {aba==="filiais"&&<FiliaisTab clients={clients} dispatches={dispatches} />}
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
+      {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} />}
       {aba==="importacao"&&isAdmin&&(
         <div style={{ marginTop:20, background:"rgba(56,189,248,0.04)", border:"1px solid rgba(56,189,248,0.18)", borderRadius:16, padding:24 }}>
