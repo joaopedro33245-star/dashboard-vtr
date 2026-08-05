@@ -171,7 +171,10 @@ const STATUS_CONFIG = {
 // ═══════════════════════════════════════════════════════════════
 const KEYWORDS_SAUDE = {
   bateria: /bateria/i,
-  comunicacao: /comunica/i,
+  // "comunica..." cobre o termo em português; "keep alive" cobre o evento
+  // técnico "FALHA DE KEEP ALIVE" (perda do sinal de comunicação com a central)
+  // que aparece no Relatório de Eventos da Segware com esse nome em inglês
+  comunicacao: /comunica|keep\s*alive/i,
   // cobre "armou", "armado", "armar", "arme", "desarmou", "desarme" etc,
   // sem confundir com a palavra "alarme" (o \b antes de "arm" não bate
   // dentro de "alarme", pois ali "arm" não começa numa borda de palavra)
@@ -309,6 +312,19 @@ function limparFantasia(raw) {
   s = s.replace(/\s*\(.*?\)\s*$/, "").trim();
   s = s.replace(/^\(.*?\)\s*/, "").trim();
   return s;
+}
+// -- O "Relatório de eventos" da Segware traz a conta como uma célula só:
+// "CÓDIGO - Nome Fantasia (Razão Social)" — separa código e nome dessa célula.
+// Se não bater com esse padrão (ex: já é só o código), devolve o código puro. --
+function parseContaSegware(raw) {
+  const s = String(raw || "").trim();
+  if (!s.includes(" - ") || !/\)\s*$/.test(s)) return { codigo: s, nome: "" };
+  const idx = s.indexOf(" - ");
+  const codigo = s.slice(0, idx).trim();
+  const resto = s.slice(idx + 3).trim();
+  const m = resto.match(/^(.*)\((.*)\)\s*$/);
+  const nome = m ? m[1].trim() : resto;
+  return { codigo, nome };
 }
 function limparEmpresa(raw, cidade) {
   if (!raw) return "";
@@ -3155,13 +3171,16 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
     readExcel(file,rows=>{
       const total=rows.length;
       const mapped=rows.map(r=>{
-        const codigo=String(r["Código da conta"]||r["Codigo da conta"]||r["Conta"]||r["conta"]||r["codigo_cliente"]||"").trim();
+        const contaRaw=String(r["Código da conta"]||r["Codigo da conta"]||r["Conta"]||r["conta"]||r["codigo_cliente"]||"").trim();
+        // -- Relatório de Eventos da Segware: coluna "Conta" vem como "CÓDIGO - Nome (Razão Social)" --
+        const {codigo,nome:nomeDaConta}=parseContaSegware(contaRaw);
         const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"").trim();
         const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"").trim();
-        const fantasiaRaw=String(r["Fantasia (Razão social)"]||r["Fantasia"]||r["fantasia"]||"").trim();
-        const evento=String(r["Evento"]||r["evento"]||"").trim();
+        const fantasiaRaw=String(r["Fantasia (Razão social)"]||r["Fantasia"]||r["fantasia"]||nomeDaConta||"").trim();
+        // -- "Evento" (relatório de deslocamentos) ou "Descrição" (relatório de eventos da Segware) --
+        const evento=String(r["Evento"]||r["evento"]||r["Descrição"]||r["Descricao"]||r["descrição"]||"").trim();
         const viatura=String(r["Viatura"]||r["viatura"]||"").trim();
-        const dataRaw=r["Data de recepção"]||r["Data de recepcao"]||r["Data/Hora"]||r["Data"]||r["data_hora"]||"";
+        const dataRaw=r["Data de recepção"]||r["Data de recepcao"]||r["Data de recebimento"]||r["Data/Hora"]||r["Data"]||r["data_hora"]||"";
         let data_hora="";
         if(dataRaw instanceof Date){data_hora=dataRaw.toLocaleString("pt-BR");}
         else if(typeof dataRaw==="number"&&dataRaw>1000){const excelEpoch=new Date(1899,11,30);const d=new Date(excelEpoch.getTime()+dataRaw*86400000);data_hora=d.toLocaleString("pt-BR");}
@@ -3172,11 +3191,11 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           if(clienteCadastrado&&clienteCadastrado.filial)filial=clienteCadastrado.filial;
         }
         if(filialForcada)filial=filialForcada;
-        const nome_cliente=limparFantasia(fantasiaRaw);
-        const portaria_inteligente=fantasiaRaw.toUpperCase().includes("PORTARIA INTELIGENTE");
+        const nome_cliente=limparFantasia(fantasiaRaw)||codigo;
+        const portaria_inteligente=(fantasiaRaw||contaRaw).toUpperCase().includes("PORTARIA INTELIGENTE");
         return{codigo_cliente:codigo,filial,nome_cliente,data_hora,evento,viatura,portaria_inteligente};
       }).filter(r=>r.codigo_cliente&&r.evento);
-      if(mapped.length===0){setDispatchError('Nenhum deslocamento encontrado. Verifique as colunas: "Código da conta", "Empresa", "Data de recepção", "Evento".');return;}
+      if(mapped.length===0){setDispatchError('Nenhum deslocamento encontrado. Verifique as colunas: "Código da conta" ou "Conta", "Empresa", "Data de recepção" ou "Data de recebimento", "Evento" ou "Descrição".');return;}
       const mesesNoArquivo={};
       for(const r of mapped){const dt=parseDataHora(r.data_hora);if(dt){const mk=getMonthKey(dt);if(mk)mesesNoArquivo[mk]=(mesesNoArquivo[mk]||0)+1;}}
       const semanasNoArquivo=new Set();
@@ -3368,12 +3387,17 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
         <div style={{ borderRadius:10,border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.03)",padding:"12px 16px",marginBottom:16 }}>
           <div style={{ fontSize:11,color:"rgba(255,255,255,0.3)",marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.08em" }}>Colunas da planilha</div>
           <div style={{ display:"flex",flexWrap:"wrap",gap:6,alignItems:"center" }}>
-            <ColTag color="#818cf8">Código da conta</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Código</span>
+            <ColTag color="#818cf8">Código da conta</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>ou</span>
+            <ColTag color="#818cf8">Conta</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Código</span>
             <ColTag color="#818cf8">Empresa</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Filial</span>
-            <ColTag color="#818cf8">Data de recepção</ColTag><ColTag color="#818cf8">Evento</ColTag>
+            <ColTag color="#818cf8">Data de recepção</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>ou</span>
+            <ColTag color="#818cf8">Data de recebimento</ColTag>
+            <ColTag color="#818cf8">Evento</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>ou</span>
+            <ColTag color="#818cf8">Descrição</ColTag>
             <ColTag color="#ffffff50">Viatura</ColTag><ColTag color="#ffffff50">Fantasia (Razão social)</ColTag>
           </div>
           <div style={{ marginTop:10,fontSize:11,color:"rgba(255,255,255,0.2)",lineHeight:1.7 }}>🏢 Clientes com <strong style={{ color:"#a78bfa" }}>Portaria Inteligente</strong> são separados automaticamente e aparecem na aba dedicada</div>
+          <div style={{ marginTop:6,fontSize:11,color:"rgba(255,255,255,0.2)",lineHeight:1.7 }}>📄 Também aceita o <strong style={{ color:"#38bdf8" }}>Relatório de eventos</strong> da Segware direto (coluna única "Conta" no formato "CÓDIGO - Nome (Razão Social)" + coluna "Descrição")</div>
         </div>
         <div style={{ marginBottom:14 }}>
           <div style={{ fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",color:"rgba(255,255,255,0.35)",marginBottom:8 }}>📌 Filial desta importação <span style={{ color:"#f87171",fontWeight:400,textTransform:"none",letterSpacing:0 }}>(obrigatório)</span></div>
