@@ -3114,12 +3114,17 @@ function MensalidadesPadraoCard({ clients, supabaseClient, onRefresh }) {
   );
 }
 
-function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, supabaseClient, onRefresh }) {
-  const clientRef=useRef();const dispatchRef=useRef();
+function ImportTab({ onImportClients, onImportDispatches, onImportEventosSaude, clients, dispatches, eventosSaude, supabaseClient, onRefresh }) {
+  const clientRef=useRef();const dispatchRef=useRef();const eventoSaudeRef=useRef();
   const [clientPreview,setClientPreview]=useState(null);const [dispatchPreview,setDispatchPreview]=useState(null);
   const [clientError,setClientError]=useState("");const [dispatchError,setDispatchError]=useState("");
   const [clientFileName,setClientFileName]=useState("");const [dispatchFileName,setDispatchFileName]=useState("");
   const [filialForcada,setFilialForcada]=useState("");
+  // -- SAÚDE DO CLIENTE: estado do upload separado (tabela "eventos_saude") --
+  const [eventoSaudePreview,setEventoSaudePreview]=useState(null);
+  const [eventoSaudeError,setEventoSaudeError]=useState("");
+  const [eventoSaudeFileName,setEventoSaudeFileName]=useState("");
+  const [filialForcadaSaude,setFilialForcadaSaude]=useState("");
 
   function readExcel(file,onSuccess,onError){
     const reader=new FileReader();
@@ -3212,6 +3217,44 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
     },setDispatchError);
   }
 
+  // -- SAÚDE DO CLIENTE: mesmo "Relatório de eventos" da Segware, mas grava numa tabela à
+  // parte ("eventos_saude") — não mexe em "dispatches" nem no custo operacional. --
+  function handleEventoSaudeFile(e){
+    const file=e.target.files[0];if(!file)return;
+    setEventoSaudeError("");setEventoSaudeFileName(file.name);
+    readExcel(file,rows=>{
+      const total=rows.length;
+      const mapped=rows.map(r=>{
+        const contaRaw=String(r["Código da conta"]||r["Codigo da conta"]||r["Conta"]||r["conta"]||r["codigo_cliente"]||"").trim();
+        const {codigo,nome:nomeDaConta}=parseContaSegware(contaRaw);
+        const empresaRaw=String(r["Empresa"]||r["empresa"]||r["Filial"]||r["filial"]||"").trim();
+        const cidadeRaw=String(r["Cidade"]||r["cidade"]||r["CIDADE"]||r["Município"]||r["Municipio"]||"").trim();
+        const fantasiaRaw=String(r["Fantasia (Razão social)"]||r["Fantasia"]||r["fantasia"]||nomeDaConta||"").trim();
+        const evento=String(r["Evento"]||r["evento"]||r["Descrição"]||r["Descricao"]||r["descrição"]||"").trim();
+        const dataRaw=r["Data de recepção"]||r["Data de recepcao"]||r["Data de recebimento"]||r["Data/Hora"]||r["Data"]||r["data_hora"]||"";
+        let data_hora="";
+        if(dataRaw instanceof Date){data_hora=dataRaw.toLocaleString("pt-BR");}
+        else if(typeof dataRaw==="number"&&dataRaw>1000){const excelEpoch=new Date(1899,11,30);const d=new Date(excelEpoch.getTime()+dataRaw*86400000);data_hora=d.toLocaleString("pt-BR");}
+        else{data_hora=String(dataRaw).trim();}
+        let filial=limparEmpresa(empresaRaw,cidadeRaw);
+        if(filialForcadaSaude)filial=filialForcadaSaude;
+        const nome_cliente=limparFantasia(fantasiaRaw)||codigo;
+        return{codigo_cliente:codigo,filial,nome_cliente,data_hora,evento};
+      }).filter(r=>r.codigo_cliente&&r.evento);
+      if(mapped.length===0){setEventoSaudeError('Nenhum evento encontrado. Verifique as colunas: "Conta" (ou "Código da conta"), "Empresa", "Data de recebimento" (ou "Data de recepção"), "Descrição" (ou "Evento").');return;}
+      // -- prévia: classifica os eventos do arquivo pra mostrar antes de confirmar --
+      const catCount={bateria:0,comunicacao:0,arme:0,outros:0};
+      for(const r of mapped){
+        if(KEYWORDS_SAUDE.bateria.test(r.evento))catCount.bateria++;
+        else if(KEYWORDS_SAUDE.comunicacao.test(r.evento))catCount.comunicacao++;
+        else if(KEYWORDS_SAUDE.arme.test(r.evento))catCount.arme++;
+        else catCount.outros++;
+      }
+      setEventoSaudePreview({rows:mapped,total,catCount});
+    },setEventoSaudeError);
+  }
+  function confirmEventosSaude(){onImportEventosSaude(eventoSaudePreview.rows);setEventoSaudePreview(null);setEventoSaudeFileName("");if(eventoSaudeRef.current)eventoSaudeRef.current.value="";}
+
   function confirmClients(){onImportClients(clientPreview);setClientPreview(null);setClientFileName("");if(clientRef.current)clientRef.current.value="";}
   const [limparMesSel, setLimparMesSel] = React.useState("");
   const [limpando, setLimpando] = React.useState(false);
@@ -3259,7 +3302,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
       }
       setMsgLimpezaSemana(`✅ ${idsParaDeletar.length} registros da semana de ${weekLabel(limparSemanaSel)} removidos!`);
       setLimparSemanaSel("");
-      try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+      try { localStorage.removeItem("vtr_dados_cache_v2"); } catch {}
       if(typeof onRefresh === "function") onRefresh();
     } catch(e) { setMsgLimpezaSemana("❌ Erro: " + e.message); }
     setLimpandoSemana(false);
@@ -3287,7 +3330,7 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
       }
       setMsgLimpeza(`✅ ${idsParaDeletar.length} registros de ${monthLabel(limparMesSel)} removidos!`);
       setLimparMesSel("");
-      try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+      try { localStorage.removeItem("vtr_dados_cache_v2"); } catch {}
       if(typeof onRefresh === "function") onRefresh();
     } catch(e) { setMsgLimpeza("❌ Erro: " + e.message); }
     setLimpando(false);
@@ -3298,17 +3341,17 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
 
   return(
     <div>
-      {(clients.length>0||dispatches.length>0)&&(
+      {(clients.length>0||dispatches.length>0||eventosSaude.length>0)&&(
         <div style={{ borderRadius:12,border:"1px solid rgba(56,189,248,0.2)",background:"rgba(56,189,248,0.05)",padding:"12px 18px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12 }}>
           <div style={{ display:"flex",alignItems:"center",gap:10 }}>
             <span style={{ fontSize:18 }}>💾</span>
-            <div><div style={{ fontSize:13,fontWeight:600,color:"#38bdf8" }}>Dados salvos no banco</div><div style={{ fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:2 }}>{clients.length} clientes · {dispatches.filter(d=>!d.portaria_inteligente).length} deslocamentos · {dispatches.filter(d=>d.portaria_inteligente).length} portaria inteligente</div></div>
+            <div><div style={{ fontSize:13,fontWeight:600,color:"#38bdf8" }}>Dados salvos no banco</div><div style={{ fontSize:11,color:"rgba(255,255,255,0.3)",marginTop:2 }}>{clients.length} clientes · {dispatches.filter(d=>!d.portaria_inteligente).length} deslocamentos · {dispatches.filter(d=>d.portaria_inteligente).length} portaria inteligente · {eventosSaude.length} eventos de saúde</div></div>
           </div>
           <div style={{ fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"right" }}>Reimporte abaixo para<br/>atualizar os dados</div>
         </div>
       )}
-      <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:24 }}>
-        {[{label:"Clientes importados",value:clients.length,icon:"👥",color:"#38bdf8"},{label:"Deslocamentos normais",value:dispatches.filter(d=>!d.portaria_inteligente).length,icon:"🚗",color:"#818cf8"},{label:"Eventos Portaria Inteligente",value:dispatches.filter(d=>d.portaria_inteligente).length,icon:"🏢",color:"#a78bfa"}].map(({label,value,icon,color})=>(
+      <div className="grid-4" style={{ marginBottom:24 }}>
+        {[{label:"Clientes importados",value:clients.length,icon:"👥",color:"#38bdf8"},{label:"Deslocamentos normais",value:dispatches.filter(d=>!d.portaria_inteligente).length,icon:"🚗",color:"#818cf8"},{label:"Eventos Portaria Inteligente",value:dispatches.filter(d=>d.portaria_inteligente).length,icon:"🏢",color:"#a78bfa"},{label:"Eventos de Saúde do Cliente",value:eventosSaude.length,icon:"💚",color:"#f87171"}].map(({label,value,icon,color})=>(
           <div key={label} style={{ borderRadius:16,border:"1px solid rgba(255,255,255,0.08)",background:"rgba(255,255,255,0.04)",padding:20,display:"flex",alignItems:"center",gap:16 }}>
             <div style={{ width:44,height:44,borderRadius:12,background:`${color}18`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20 }}>{icon}</div>
             <div><div style={{ fontSize:22,fontWeight:800,color:"#fff" }}>{value}</div><div style={{ fontSize:11,color:"rgba(255,255,255,0.35)" }}>{label}</div></div>
@@ -3433,6 +3476,59 @@ function ImportTab({ onImportClients, onImportDispatches, clients, dispatches, s
           </div>
         )}
       </div>
+      <div style={{ ...card, border:"1px solid rgba(248,113,113,0.25)", background:"rgba(248,113,113,0.03)" }}>
+        <SectionLabel>💚 Importar Eventos de Saúde do Cliente</SectionLabel>
+        <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:14,lineHeight:1.6 }}>
+          Sobe o "Relatório de eventos" da Segware (bateria, comunicação/keep alive, não-armado) direto pra
+          aba <strong style={{ color:"#f87171" }}>Saúde do Cliente</strong> — grava numa tabela separada de
+          "dispatches", então <strong>não afeta</strong> o custo operacional nem o financeiro das outras abas.
+        </div>
+        <div style={{ borderRadius:10,border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.03)",padding:"12px 16px",marginBottom:16 }}>
+          <div style={{ fontSize:11,color:"rgba(255,255,255,0.3)",marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.08em" }}>Colunas da planilha</div>
+          <div style={{ display:"flex",flexWrap:"wrap",gap:6,alignItems:"center" }}>
+            <ColTag color="#f87171">Conta</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Código + Nome</span>
+            <ColTag color="#f87171">Empresa</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Filial</span>
+            <ColTag color="#f87171">Data de recebimento</ColTag>
+            <ColTag color="#f87171">Descrição</ColTag><span style={{ color:"rgba(255,255,255,0.2)",fontSize:11 }}>→ Evento</span>
+          </div>
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",color:"rgba(255,255,255,0.35)",marginBottom:8 }}>📌 Filial desta importação <span style={{ color:"rgba(255,255,255,0.25)",fontWeight:400,textTransform:"none",letterSpacing:0 }}>(opcional — se vazio, detecta pela coluna "Empresa")</span></div>
+          <select value={filialForcadaSaude} onChange={e=>{setFilialForcadaSaude(e.target.value);setEventoSaudePreview(null);setEventoSaudeFileName("");if(eventoSaudeRef.current)eventoSaudeRef.current.value="";}} style={{ width:"100%",padding:"10px 14px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.05)",color:filialForcadaSaude?"#f87171":"#fff",fontSize:13,fontWeight:filialForcadaSaude?700:400,outline:"none",cursor:"pointer" }}>
+            <option value="">— Detectar automaticamente pela coluna Empresa —</option>
+            <option value="SERVIS CEARÁ">SERVIS CEARÁ</option><option value="SERVIS AMAZONAS">SERVIS AMAZONAS</option><option value="SERVIS MARANHÃO">SERVIS MARANHÃO</option>
+            <option value="SECOPI PIAUÍ">SECOPI PIAUÍ</option>
+            <option value="1 P3 SOLUCOES">P3 SOLUÇÕES</option><option value="2 PROGUARD">PROGUARD</option><option value="Maver Monitoramento">MAVER MONITORAMENTO</option>
+            <option value="SIDERALTECH">SIDERALTECH</option><option value="VISION SEGURANCA">VISION SEGURANÇA</option><option value="OVERTEC">OVERTEC</option>
+            <option value="3 LUXUS SERVICOS E TECNOLOGIA LTDA">LUXUS</option><option value="4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA">PRIORIDADE</option><option value="PERES MONITORAMENTO">PERES MONITORAMENTO</option>
+          </select>
+        </div>
+        <DropZone color="#f87171" fileName={eventoSaudeFileName} inputRef={eventoSaudeRef} onChange={handleEventoSaudeFile} label="Clique para selecionar o Relatório de eventos (bateria/comunicação/não-armado)" />
+        {eventoSaudeError&&<div style={{ marginTop:12,padding:"10px 14px",borderRadius:10,background:"#ef444420",border:"1px solid #ef444440",color:"#f87171",fontSize:12 }}>⚠️ {eventoSaudeError}</div>}
+        {eventoSaudePreview&&(
+          <div style={{ marginTop:16 }}>
+            <div style={{ fontSize:12,color:"rgba(255,255,255,0.4)",marginBottom:10 }}>✅ <strong style={{ color:"#34d399" }}>{eventoSaudePreview.rows.length} eventos</strong> encontrados — classificação prévia:</div>
+            <div style={{ marginBottom:12,display:"flex",flexWrap:"wrap",gap:6 }}>
+              <span style={{ padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:700,background:"rgba(251,191,36,0.12)",color:"#fbbf24",border:"1px solid rgba(251,191,36,0.3)" }}>🔋 {eventoSaudePreview.catCount.bateria} bateria</span>
+              <span style={{ padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:700,background:"rgba(56,189,248,0.12)",color:"#38bdf8",border:"1px solid rgba(56,189,248,0.3)" }}>📡 {eventoSaudePreview.catCount.comunicacao} comunicação</span>
+              <span style={{ padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:700,background:"rgba(248,113,113,0.12)",color:"#f87171",border:"1px solid rgba(248,113,113,0.3)" }}>🔓 {eventoSaudePreview.catCount.arme} armar/desarmar</span>
+              {eventoSaudePreview.catCount.outros>0&&<span style={{ padding:"5px 12px",borderRadius:99,fontSize:11,fontWeight:700,background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.4)",border:"1px solid rgba(255,255,255,0.12)" }}>❔ {eventoSaudePreview.catCount.outros} outros</span>}
+            </div>
+            <div style={{ overflowX:"auto",borderRadius:10,border:"1px solid rgba(255,255,255,0.07)" }}>
+              <table style={{ width:"100%",borderCollapse:"collapse",fontSize:12 }}>
+                <thead><tr style={{ background:"rgba(255,255,255,0.04)" }}>{["Código","Filial","Data","Evento"].map(h=><th key={h} style={{ padding:"8px 12px",textAlign:"left",color:"rgba(255,255,255,0.3)",fontSize:10,textTransform:"uppercase" }}>{h}</th>)}</tr></thead>
+                <tbody>{eventoSaudePreview.rows.slice(0,5).map((r,i)=><tr key={i} style={{ borderTop:"1px solid rgba(255,255,255,0.05)" }}><td style={{ padding:"8px 12px",color:"#f87171",fontFamily:"monospace" }}>{r.codigo_cliente}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{r.filial}</td><td style={{ padding:"8px 12px",color:"rgba(255,255,255,0.5)" }}>{String(r.data_hora||"")}</td><td style={{ padding:"8px 12px",color:"#fff" }}>{r.evento}</td></tr>)}</tbody>
+              </table>
+            </div>
+            <div style={{ display:"flex",gap:10,marginTop:14 }}>
+              <button onClick={confirmEventosSaude} style={{ flex:1,padding:10,borderRadius:10,border:"none",background:"#f87171",color:"#0a0f1a",fontWeight:700,fontSize:13,cursor:"pointer" }}>✅ Adicionar — {eventoSaudePreview.rows.length} eventos ao banco</button>
+              <button onClick={()=>{setEventoSaudePreview(null);setEventoSaudeFileName("");if(eventoSaudeRef.current)eventoSaudeRef.current.value="";}} style={{ padding:"10px 16px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:13,cursor:"pointer" }}>Cancelar</button>
+            </div>
+          </div>
+        )}
+        {eventosSaude.length>0&&<div style={{ marginTop:14,fontSize:11,color:"rgba(255,255,255,0.3)" }}>💾 {eventosSaude.length} eventos de saúde já salvos no banco</div>}
+      </div>
+
       {/* ── Importação de Clientes Portaria Inteligente ── */}
       <div style={{ borderRadius:16,border:"1px solid rgba(167,139,250,0.2)",background:"rgba(167,139,250,0.04)",padding:24,marginBottom:20 }}>
         <div style={{ display:"flex",alignItems:"center",gap:12,marginBottom:16 }}>
@@ -3618,7 +3714,7 @@ function ClientesTab({ clients, dispatches, supabaseClient, onRefresh, isAdmin }
       setEditando(null);
       setMsgSalvo("✅ Cliente atualizado!");
       setTimeout(()=>setMsgSalvo(""),4000);
-      try{localStorage.removeItem("vtr_dados_cache");}catch{}
+      try{localStorage.removeItem("vtr_dados_cache_v2");}catch{}
       if(typeof onRefresh==="function") onRefresh();
     }else{
       setMsgSalvo("❌ Erro: "+(error.message||JSON.stringify(error)));
@@ -4326,7 +4422,7 @@ function BaseAtivaTab({supabaseClient, onRefresh}) {
         await supabaseClient.from('clients')
           .update(payload)
           .eq('codigo_cliente', editando.conta);
-        try{localStorage.removeItem('vtr_dados_cache');}catch{}
+        try{localStorage.removeItem('vtr_dados_cache_v2');}catch{}
         if(typeof onRefresh==='function') onRefresh(true);
       }
     }
@@ -5289,18 +5385,29 @@ function RankingSaudeCard({ titulo, icone, accent, itens, metricaFn, subFn, vazi
   );
 }
 
-function SaudeClienteTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTodos }) {
+// -- SAÚDE DO CLIENTE: fonte de dados própria (tabela "eventos_saude"), independente de
+// "dispatches" — por isso tem seu próprio filtro de mês local, em vez de usar o filtro
+// global do topo (que é calculado em cima dos meses de deslocamentos, não desses eventos). --
+function SaudeClienteTab({ clients, eventosSaude }) {
+  const [mesFiltro, setMesFiltro] = useState("Todos");
+
+  const mesesTodos = useMemo(() => {
+    const s = new Set();
+    for (const e of eventosSaude) { const dt = parseDataHora(e.data_hora); if (dt) { const mk = getMonthKey(dt); if (mk) s.add(mk); } }
+    return ["Todos", ...Array.from(s).filter(Boolean).sort().reverse()];
+  }, [eventosSaude]);
+
   const mesFiltroEfetivo = mesesTodos.includes(mesFiltro) ? mesFiltro : "Todos";
 
-  const dispatchesMes = useMemo(() => {
-    if (mesFiltroEfetivo === "Todos") return dispatches;
-    return dispatches.filter(d => {
-      const dt = parseDataHora(d.data_hora);
+  const eventosMes = useMemo(() => {
+    if (mesFiltroEfetivo === "Todos") return eventosSaude;
+    return eventosSaude.filter(e => {
+      const dt = parseDataHora(e.data_hora);
       return dt && getMonthKey(dt) === mesFiltroEfetivo;
     });
-  }, [dispatches, mesFiltroEfetivo]);
+  }, [eventosSaude, mesFiltroEfetivo]);
 
-  // Nome "oficial" do cadastro do cliente, com fallback pro nome que veio no deslocamento
+  // Nome "oficial" do cadastro do cliente, com fallback pro nome que veio no evento
   const nomeMap = useMemo(() => {
     const m = {};
     for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.nome_cliente || c.codigo_cliente;
@@ -5315,23 +5422,23 @@ function SaudeClienteTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTo
   }, [clients]);
 
   // ── Top clientes por falha de bateria — respeita o filtro de mês/período do topo ──
-  const rankingBateria = useMemo(() => rankearPorPalavraChave(dispatchesMes, KEYWORDS_SAUDE.bateria, nomeMap), [dispatchesMes, nomeMap]);
+  const rankingBateria = useMemo(() => rankearPorPalavraChave(eventosMes, KEYWORDS_SAUDE.bateria, nomeMap), [eventosMes, nomeMap]);
 
   // ── Top clientes por falha de comunicação — respeita o filtro de mês/período do topo ──
-  const rankingComunicacao = useMemo(() => rankearPorPalavraChave(dispatchesMes, KEYWORDS_SAUDE.comunicacao, nomeMap), [dispatchesMes, nomeMap]);
+  const rankingComunicacao = useMemo(() => rankearPorPalavraChave(eventosMes, KEYWORDS_SAUDE.comunicacao, nomeMap), [eventosMes, nomeMap]);
 
   // ── Clientes sem armar há mais tempo — usa SEMPRE o histórico completo (ignora o filtro de
   // mês acima), porque essa lista é sobre "há quantos dias não vemos um evento de armar/desarmar
   // desse cliente", e restringir a um único mês quase sempre esvaziaria a lista ──
   const rankingSemArmar = useMemo(() => {
     const porCliente = {};
-    for (const d of dispatches) {
-      if (!KEYWORDS_SAUDE.arme.test(d.evento || "")) continue;
-      const dt = parseDataHora(d.data_hora);
+    for (const e of eventosSaude) {
+      if (!KEYWORDS_SAUDE.arme.test(e.evento || "")) continue;
+      const dt = parseDataHora(e.data_hora);
       if (!dt) continue;
-      const key = `${d.codigo_cliente}||${d.filial}`;
+      const key = `${e.codigo_cliente}||${e.filial}`;
       if (statusAtivoMap[key] === false) continue;
-      if (!porCliente[key]) porCliente[key] = { chave:key, nome:nomeMap[key]||d.nome_cliente||d.codigo_cliente, codigo:d.codigo_cliente, filial:d.filial, ultimaData:dt, totalEventos:0 };
+      if (!porCliente[key]) porCliente[key] = { chave:key, nome:nomeMap[key]||e.nome_cliente||e.codigo_cliente, codigo:e.codigo_cliente, filial:e.filial, ultimaData:dt, totalEventos:0 };
       if (dt > porCliente[key].ultimaData) porCliente[key].ultimaData = dt;
       porCliente[key].totalEventos++;
     }
@@ -5340,10 +5447,10 @@ function SaudeClienteTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTo
       .map(c => ({ ...c, diasSemArmar: Math.max(0, Math.floor((hoje - c.ultimaData) / 86400000)) }))
       .sort((a,b) => b.diasSemArmar - a.diasSemArmar)
       .slice(0, 15);
-  }, [dispatches, nomeMap, statusAtivoMap]);
+  }, [eventosSaude, nomeMap, statusAtivoMap]);
 
-  if (dispatches.length === 0) {
-    return <EmptyState icon="💚" title="Sem deslocamentos importados" sub="Importe os deslocamentos para ver a saúde dos clientes (bateria, comunicação e clientes sem armar)." />;
+  if (eventosSaude.length === 0) {
+    return <EmptyState icon="💚" title="Sem eventos de saúde do cliente importados" sub='Importe o "Relatório de eventos" (bateria, comunicação, não-armado) na aba Importação para ver a saúde dos clientes. Esses dados ficam numa tabela separada dos deslocamentos, então não afetam o custo operacional.' />;
   }
 
   return (
@@ -5384,11 +5491,13 @@ function SaudeClienteTab({ clients, dispatches, mesFiltro, setMesFiltro, mesesTo
       />
 
       <div style={{ marginTop:16, fontSize:11, color:"rgba(255,255,255,0.3)", lineHeight:1.6 }}>
-        * Essas listas são calculadas a partir do texto do campo "Evento" de cada deslocamento: bateria conta quem
-        tem "bateria" no evento, comunicação conta quem tem "comunica…" no evento, e o ranking de "sem armar" olha
-        a data do último evento de armar/desarmar de cada cliente (por isso ignora o filtro de período acima — ele
-        olha sempre o histórico completo). Se os textos de evento do seu sistema usarem outras palavras, me avise
-        para eu ajustar a classificação (ela está isolada em <code>KEYWORDS_SAUDE</code>, no topo do arquivo).
+        * Essas listas vêm da tabela separada "eventos_saude" (Relatório de eventos da Segware), não de
+        "dispatches" — por isso não afetam o custo operacional nem o financeiro das outras abas. Bateria conta
+        quem tem "bateria" na descrição do evento, comunicação conta "comunica…" ou "keep alive", e o ranking de
+        "sem armar" olha a data do último evento de armar/desarmar de cada cliente (por isso ignora o filtro de
+        período acima — ele olha sempre o histórico completo). Se os textos de evento do seu sistema usarem
+        outras palavras, me avise para eu ajustar a classificação (ela está isolada em <code>KEYWORDS_SAUDE</code>,
+        no topo do arquivo).
       </div>
     </div>
   );
@@ -5399,11 +5508,17 @@ function App() {
   const [buscaGlobalAberta,setBuscaGlobalAberta]=useState(false);
   const [clienteGlobal,setClienteGlobal]=useState(null);
   const [clients,setClients]=useState([]);const [dispatches,setDispatches]=useState([]);const [lastUpdated,setLastUpdated]=useState("");
+  // -- SAÚDE DO CLIENTE: eventos de sistema (bateria/comunicação/não-armado) ficam numa
+  // tabela separada de "dispatches" (que é só pra deslocamentos reais de viatura, usados
+  // no cálculo de custo operacional) — assim um não polui o outro --
+  const [eventosSaude,setEventosSaude]=useState([]);
   const [loadingData,setLoadingData]=useState(false);const [loadingMsg,setLoadingMsg]=useState("Sincronizando…");
   const [importMsg,setImportMsg]=useState("");const [erroGlobal,setErroGlobal]=useState("");
   const [confirmLimparDesl,setConfirmLimparDesl]=useState(false);const [confirmLimparTudo,setConfirmLimparTudo]=useState(false);
+  const [confirmLimparSaude,setConfirmLimparSaude]=useState(false);
   // -- SEGURANÇA: texto de confirmação para ações destrutivas --
   const [confirmTextDesl,setConfirmTextDesl]=useState("");const [confirmTextTudo,setConfirmTextTudo]=useState("");
+  const [confirmTextSaude,setConfirmTextSaude]=useState("");
   // -- SEGWARE: estados de sincronização automática --
   const [segSyncStatus,setSegSyncStatus]=useState("idle"); // idle | syncing | ok | erro
   const [segSyncMsg,setSegSyncMsg]=useState("");
@@ -5458,7 +5573,7 @@ function App() {
           : "✅ Sincronizado — nenhum dado novo (total analisado: " + (result.total||0) + ")"
       );
       if (result.novos > 0) {
-        try { localStorage.removeItem("vtr_dados_cache"); } catch {}
+        try { localStorage.removeItem("vtr_dados_cache_v2"); } catch {}
         await carregarDados(true);
       }
     }
@@ -5480,9 +5595,9 @@ function App() {
     });
     const{data:{subscription}}=supabaseClient.auth.onAuthStateChange(async(event,session)=>{
       if(event==="SIGNED_OUT"||event==="TOKEN_REFRESHED"&&!session){
-        setUsuario(null);setClients([]);setDispatches([]);
+        setUsuario(null);setClients([]);setDispatches([]);setEventosSaude([]);
       }
-      if(event==="USER_UPDATED"&&!session){setUsuario(null);setClients([]);setDispatches([]);}
+      if(event==="USER_UPDATED"&&!session){setUsuario(null);setClients([]);setDispatches([]);setEventosSaude([]);}
     });
     return()=>subscription.unsubscribe();
   },[]);
@@ -5530,7 +5645,7 @@ function App() {
     return all;
   }
 
-  const CACHE_KEY="vtr_dados_cache";
+  const CACHE_KEY="vtr_dados_cache_v2"; // v2: agora inclui eventos_saude (mudou o formato do cache)
   const CACHE_TTL=5*60*1000; // 5 minutos
   const LOG_KEY="vtr_import_log";
 
@@ -5543,17 +5658,25 @@ function App() {
     }catch{}
   }
 
-  function salvarCache(cls,dis){
-    try{localStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),cls,dis}));}catch{}
+  function salvarCache(cls,dis,evt){
+    try{localStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),cls,dis,evt}));}catch{}
   }
   function lerCache(){
     try{
       const raw=localStorage.getItem(CACHE_KEY);
       if(!raw)return null;
-      const{ts,cls,dis}=JSON.parse(raw);
+      const{ts,cls,dis,evt}=JSON.parse(raw);
       if(Date.now()-ts>CACHE_TTL)return null;
-      return{cls,dis};
+      return{cls,dis,evt};
     }catch{return null;}
+  }
+
+  // -- SAÚDE DO CLIENTE: busca a tabela "eventos_saude" à parte. Se a tabela ainda não
+  // existir no Supabase (projeto não rodou o SQL de criação ainda), não quebra o resto
+  // do carregamento — só fica vazia até a tabela ser criada. --
+  async function fetchEventosSaude(){
+    try{ return await fetchAll("eventos_saude","data_hora",false); }
+    catch(e){ console.warn("eventos_saude ainda não configurado no Supabase:",e.message); return []; }
   }
 
   async function carregarDados(forcarReload=false){
@@ -5564,7 +5687,8 @@ function App() {
         setLoadingMsg("Carregando do cache…");
         const clsNorm=(cache.cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
         const disNorm=(cache.dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
-        setClients(clsNorm);setDispatches(disNorm);
+        const evtNorm=(cache.evt||[]).map(e=>({...e,filial:limparEmpresa(e.filial)}));
+        setClients(clsNorm);setDispatches(disNorm);setEventosSaude(evtNorm);
         setLoadingData(false);setLoadingMsg("Sincronizando…");
         return;
       }
@@ -5575,11 +5699,14 @@ function App() {
       const cls=await fetchAll("clients","nome_cliente",true);
       setLoadingMsg("Carregando deslocamentos…");
       const dis=await fetchAll("dispatches","data_hora",false);
+      setLoadingMsg("Carregando eventos de saúde do cliente…");
+      const evt=await fetchEventosSaude();
       setLoadingMsg("Processando dados…");
-      salvarCache(cls,dis);
+      salvarCache(cls,dis,evt);
       const clsNorm=(cls||[]).map(c=>({...c,filial_original:c.filial,filial:limparEmpresa(c.filial)}));
       const disNorm=(dis||[]).map(d=>({...d,filial:limparEmpresa(d.filial),portaria_inteligente:Boolean(d.portaria_inteligente)}));
-      setClients(clsNorm);setDispatches(disNorm);
+      const evtNorm=(evt||[]).map(e=>({...e,filial:limparEmpresa(e.filial)}));
+      setClients(clsNorm);setDispatches(disNorm);setEventosSaude(evtNorm);
     }catch(e){
       setErroGlobal(e.message||"Erro ao carregar dados. Verifique sua conexão e tente novamente.");
     }
@@ -5587,7 +5714,7 @@ function App() {
   }
 
   async function handleLogin(user){setUsuario(user);await carregarDados();}
-  async function handleLogout(){await supabaseClient.auth.signOut();setUsuario(null);setClients([]);setDispatches([]);}
+  async function handleLogout(){await supabaseClient.auth.signOut();setUsuario(null);setClients([]);setDispatches([]);setEventosSaude([]);}
 
   async function handleImportClients(data){
     setLoadingData(true);
@@ -5617,7 +5744,7 @@ function App() {
       if(error){erros++;erroMsg=error.message||JSON.stringify(error);}
     }
     if(erros>0){setImportMsg("❌ Erro: "+erroMsg);setLoadingData(false);return;}
-    try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("clientes",deduped.length,usuario?.nome); setLastUpdated(new Date().toLocaleString("pt-BR"));setImportMsg("✅ Clientes importados com sucesso!");setTimeout(()=>setImportMsg(""),5000);await carregarDados(true);
+    try{localStorage.removeItem('vtr_dados_cache_v2');}catch{} adicionarLog("clientes",deduped.length,usuario?.nome); setLastUpdated(new Date().toLocaleString("pt-BR"));setImportMsg("✅ Clientes importados com sucesso!");setTimeout(()=>setImportMsg(""),5000);await carregarDados(true);
   }
 
   async function handleImportDispatches(data){
@@ -5669,21 +5796,75 @@ function App() {
       const msgNovos=novosClientes.length>0?` · ${novosClientes.length} clientes novos`:"";
       const msgDup=duplicados>0?` · ${duplicados} duplicados ignorados`:"";
       setImportMsg("✅ "+totalInserido+" deslocamentos adicionados!"+msgNovos+msgDup);
-      try{localStorage.removeItem('vtr_dados_cache');}catch{} adicionarLog("deslocamentos",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);
+      try{localStorage.removeItem('vtr_dados_cache_v2');}catch{} adicionarLog("deslocamentos",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);
+    }catch(e){setImportMsg("❌ Erro ao importar: "+e.message);setLoadingData(false);}
+  }
+
+  // -- SAÚDE DO CLIENTE: importa o "Relatório de eventos" da Segware (bateria, keep alive,
+  // não-armado etc.) pra tabela separada "eventos_saude" — NÃO mexe em "dispatches", então
+  // não afeta o custo operacional nem nenhuma métrica financeira das outras abas. --
+  async function handleImportEventosSaude(data){
+    setLoadingData(true);
+    try{
+      const sanitized=data.map(d=>({
+        codigo_cliente:sanitizeStr(d.codigo_cliente,50),
+        filial:sanitizeStr(d.filial,100),
+        nome_cliente:sanitizeStr(d.nome_cliente,200),
+        data_hora:sanitizeStr(d.data_hora,30),
+        evento:sanitizeStr(d.evento,300),
+      })).filter(d=>d.codigo_cliente&&d.filial&&d.evento);
+      if(sanitized.length===0){setImportMsg("❌ Nenhum evento válido encontrado no arquivo.");setLoadingData(false);return;}
+      // Dedup: busca só os eventos do mesmo período do arquivo (evita timeout em arquivos grandes)
+      const datasNoArquivo=sanitized.map(d=>d.data_hora).filter(Boolean);
+      const mesesArquivo=[...new Set(datasNoArquivo.map(dh=>{
+        try{ const p=dh.split(", ")[0].split("/"); return `${p[2]}-${p[1].padStart(2,"0")}`; }catch{ return null; }
+      }).filter(Boolean))];
+      const existentesSet=new Set();
+      for(const mk of mesesArquivo){
+        const [ano,mes]=mk.split("-");
+        let from=0;
+        while(true){
+          const{data:existentes}=await supabaseClient.from("eventos_saude")
+            .select("codigo_cliente,filial,data_hora,evento")
+            .like("data_hora", `%/${mes}/${ano}%`)
+            .range(from,from+999);
+          if(!existentes||existentes.length===0)break;
+          for(const e of existentes)existentesSet.add(`${e.codigo_cliente}||${e.filial}||${e.data_hora}||${e.evento}`);
+          if(existentes.length<1000)break;
+          from+=1000;
+        }
+      }
+      const novos=sanitized.filter(d=>!existentesSet.has(`${d.codigo_cliente}||${d.filial}||${d.data_hora}||${d.evento}`));
+      const duplicados=sanitized.length-novos.length;
+      let totalInserido=0;
+      for(let i=0;i<novos.length;i+=200){
+        const lote=novos.slice(i,i+200);
+        const{error:insError}=await supabaseClient.from("eventos_saude").insert(lote);
+        if(insError){setImportMsg("❌ Erro Supabase: "+insError.message+" (confira se a tabela \"eventos_saude\" já foi criada)");setLoadingData(false);return;}
+        totalInserido+=lote.length;
+      }
+      const msgDup=duplicados>0?` · ${duplicados} duplicados ignorados`:"";
+      setImportMsg("✅ "+totalInserido+" eventos de saúde do cliente adicionados!"+msgDup);
+      try{localStorage.removeItem('vtr_dados_cache_v2');}catch{} adicionarLog("eventos_saude",sanitized.length,usuario?.nome); setTimeout(()=>setImportMsg(""),7000);await carregarDados(true);
     }catch(e){setImportMsg("❌ Erro ao importar: "+e.message);setLoadingData(false);}
   }
 
   async function handleLimpar(){
     setLoadingData(true);
     try{
-      let dIds=[],cIds=[],from=0;
+      let dIds=[],cIds=[],eIds=[],from=0;
       while(true){const{data}=await supabaseClient.from("dispatches").select("id").range(from,from+999);if(!data||data.length===0)break;dIds=dIds.concat(data.map(r=>r.id));if(data.length<1000)break;from+=1000;}
       for(let i=0;i<dIds.length;i+=500)await supabaseClient.from("dispatches").delete().in("id",dIds.slice(i,i+500));
       from=0;
       while(true){const{data}=await supabaseClient.from("clients").select("id").range(from,from+999);if(!data||data.length===0)break;cIds=cIds.concat(data.map(r=>r.id));if(data.length<1000)break;from+=1000;}
       for(let i=0;i<cIds.length;i+=500)await supabaseClient.from("clients").delete().in("id",cIds.slice(i,i+500));
+      from=0;
+      try{
+        while(true){const{data}=await supabaseClient.from("eventos_saude").select("id").range(from,from+999);if(!data||data.length===0)break;eIds=eIds.concat(data.map(r=>r.id));if(data.length<1000)break;from+=1000;}
+        for(let i=0;i<eIds.length;i+=500)await supabaseClient.from("eventos_saude").delete().in("id",eIds.slice(i,i+500));
+      }catch(e){/* tabela eventos_saude pode não existir ainda — ok ignorar */}
     }catch(e){console.error("handleLimpar error:",e);}
-    try{localStorage.removeItem('vtr_dados_cache');}catch{} setClients([]);setDispatches([]);setLastUpdated("");setAba("importacao");setLoadingData(false);
+    try{localStorage.removeItem('vtr_dados_cache_v2');}catch{} setClients([]);setDispatches([]);setEventosSaude([]);setLastUpdated("");setAba("importacao");setLoadingData(false);
   }
 
   async function handleLimparDeslocamentos(){
@@ -5699,6 +5880,24 @@ function App() {
     }catch(e){
       setImportMsg("❌ Erro inesperado: "+e.message);
       await carregarDados();
+    }
+    setLoadingData(false);
+  }
+
+  // -- SAÚDE DO CLIENTE: apaga só a tabela "eventos_saude" — não mexe em deslocamentos nem clientes --
+  async function handleLimparEventosSaude(){
+    setLoadingData(true);
+    try{
+      let allIds=[],from=0;const PAGE=1000;
+      while(true){const{data,error}=await supabaseClient.from("eventos_saude").select("id").range(from,from+PAGE-1);if(error||!data||data.length===0)break;allIds=allIds.concat(data.map(r=>r.id));if(data.length<PAGE)break;from+=PAGE;}
+      if(allIds.length>0){for(let i=0;i<allIds.length;i+=500){const{error}=await supabaseClient.from("eventos_saude").delete().in("id",allIds.slice(i,i+500));if(error){setImportMsg("❌ Erro ao apagar: "+error.message);setLoadingData(false);return;}}}
+      setConfirmLimparSaude(false);
+      setImportMsg("✅ "+allIds.length+" eventos de saúde do cliente apagados com sucesso!");
+      setTimeout(()=>setImportMsg(""),5000);
+      await carregarDados(true);
+    }catch(e){
+      setImportMsg("❌ Erro inesperado: "+e.message);
+      await carregarDados(true);
     }
     setLoadingData(false);
   }
@@ -5779,9 +5978,19 @@ function App() {
               </div>
             </div>
           ):<button onClick={()=>{setConfirmLimparDesl(true);setConfirmTextDesl("");}} style={{ border:"1px solid rgba(251,146,60,0.35)",background:"rgba(251,146,60,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(251,146,60,0.8)",cursor:"pointer" }}>🗑 Limpar deslocamentos</button>)}
+          {isAdmin&&eventosSaude.length>0&&(confirmLimparSaude?(
+            <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.35)",minWidth:220 }}>
+              <span style={{ fontSize:11,color:"#f87171",fontWeight:700 }}>⚠️ Apagar {eventosSaude.length} eventos de saúde?</span>
+              <input value={confirmTextSaude} onChange={e=>setConfirmTextSaude(e.target.value)} placeholder='Digite "CONFIRMAR" para prosseguir' style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#f87171",fontSize:11,outline:"none",width:"100%" }} />
+              <div style={{ display:"flex",gap:6 }}>
+                <button onClick={handleLimparEventosSaude} disabled={confirmTextSaude!=="CONFIRMAR"} style={{ flex:1,border:"none",background:confirmTextSaude==="CONFIRMAR"?"#ef4444":"rgba(239,68,68,0.3)",color:"#fff",borderRadius:7,padding:"5px 8px",cursor:confirmTextSaude==="CONFIRMAR"?"pointer":"not-allowed",fontSize:11,fontWeight:700 }}>Apagar</button>
+                <button onClick={()=>{setConfirmLimparSaude(false);setConfirmTextSaude("");}} style={{ flex:1,border:"1px solid rgba(255,255,255,0.15)",background:"transparent",color:"rgba(255,255,255,0.4)",borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:11 }}>Cancelar</button>
+              </div>
+            </div>
+          ):<button onClick={()=>{setConfirmLimparSaude(true);setConfirmTextSaude("");}} title="Apaga só os eventos de saúde do cliente (bateria/comunicação/não-armado) — não mexe em deslocamentos" style={{ border:"1px solid rgba(248,113,113,0.35)",background:"rgba(248,113,113,0.08)",borderRadius:10,padding:"7px 12px",fontSize:12,color:"rgba(248,113,113,0.8)",cursor:"pointer" }}>🗑 Limpar saúde do cliente</button>)}
           {isAdmin&&(clients.length>0||dispatches.length>0)&&(confirmLimparTudo?(
             <div style={{ display:"flex",flexDirection:"column",gap:6,padding:"8px 12px",borderRadius:10,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",minWidth:240 }}>
-              <div style={{ fontSize:11,color:"#f87171",lineHeight:1.4 }}><div style={{ fontWeight:700 }}>⚠️ APAGAR TUDO PERMANENTEMENTE?</div><div style={{ opacity:0.8 }}>{clients.length} clientes + {dispatches.length} desl.</div></div>
+              <div style={{ fontSize:11,color:"#f87171",lineHeight:1.4 }}><div style={{ fontWeight:700 }}>⚠️ APAGAR TUDO PERMANENTEMENTE?</div><div style={{ opacity:0.8 }}>{clients.length} clientes + {dispatches.length} desl. + {eventosSaude.length} eventos de saúde</div></div>
               <input value={confirmTextTudo} onChange={e=>setConfirmTextTudo(e.target.value)} placeholder='Digite "CONFIRMAR" para prosseguir' style={{ padding:"5px 8px",borderRadius:7,border:"1px solid rgba(239,68,68,0.4)",background:"rgba(239,68,68,0.08)",color:"#f87171",fontSize:11,outline:"none",width:"100%" }} />
               <div style={{ display:"flex",gap:6 }}>
                 <button onClick={()=>{if(confirmTextTudo==="CONFIRMAR"){handleLimpar();setConfirmLimparTudo(false);setConfirmTextTudo("");}}} disabled={confirmTextTudo!=="CONFIRMAR"} style={{ flex:1,border:"none",background:confirmTextTudo==="CONFIRMAR"?"#ef4444":"rgba(239,68,68,0.3)",color:"#fff",borderRadius:7,padding:"5px 8px",cursor:confirmTextTudo==="CONFIRMAR"?"pointer":"not-allowed",fontSize:11,fontWeight:700,whiteSpace:"nowrap" }}>Apagar tudo</button>
@@ -5826,8 +6035,8 @@ function App() {
       {aba==="filiais"&&<FiliaisTab clients={clients} dispatches={dispatches} />}
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
-      {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} dispatches={dispatches} mesFiltro={mesFiltroGlobal} setMesFiltro={setMesFiltroGlobal} mesesTodos={mesesTodos} />}
-      {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} clients={clients} dispatches={dispatches} supabaseClient={supabaseClient} onRefresh={carregarDados} />}
+      {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
+      {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados} />}
       {aba==="importacao"&&isAdmin&&(
         <div style={{ marginTop:20, background:"rgba(56,189,248,0.04)", border:"1px solid rgba(56,189,248,0.18)", borderRadius:16, padding:24 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:18 }}>
