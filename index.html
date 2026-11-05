@@ -21,6 +21,8 @@
   (function(){
     var q = new URLSearchParams(location.search);
     window.VTR_EMBED = q.get("embed") === "1";
+    try { if (q.get("origem") === "backoffice") sessionStorage.setItem("vtr_origem", "backoffice"); window.VTR_ORIGEM_BO = sessionStorage.getItem("vtr_origem") === "backoffice"; } catch (e) {}
+    try { if (q.get("tema") && !window.VTR_EMBED) localStorage.setItem("vtr_tema", q.get("tema")); } catch (e) {}
     var t = q.get("tema"); try { t = t || localStorage.getItem("vtr_tema"); } catch (e) {}
     document.documentElement.setAttribute("data-theme", t === "dark" ? "dark" : "light");
     if (window.VTR_EMBED) document.documentElement.classList.add("vtr-embed");
@@ -5893,6 +5895,7 @@ function Sidebar({ aba, setAba, isAdmin, collapsed, onToggleCollapse, mobileOpen
             <button onClick={onToggleCollapse} title="Recolher menu" style={{ width:26, height:26, borderRadius:7, border:"1px solid rgba(var(--ink),0.1)", background:"var(--card)", color:"rgba(var(--ink),0.4)", cursor:"pointer", fontSize:13, flexShrink:0 }}>‹</button>
           )}
         </div>
+        {window.VTR_ORIGEM_BO&&<a href="https://backoffice-servis.vercel.app/" title="Voltar ao Backoffice" style={{ display:"flex", alignItems:"center", justifyContent:collapsed?"center":"flex-start", gap:8, margin:"10px 8px 0", padding:collapsed?"9px 0":"9px 14px", borderRadius:10, border:"1px solid rgba(255,255,255,0.14)", color:"rgba(255,255,255,0.85)", fontSize:13, fontWeight:600, textDecoration:"none" }}>←{!collapsed&&<span>Voltar ao Backoffice</span>}</a>}
         <div style={{ padding:"10px 8px", overflowY:"auto", overflowX:"hidden", flex:1 }}>
           {SIDEBAR_NAV.filter(n=>!n.adminOnly||isAdmin).map(n=> n.standalone ? (
             <SidebarItem key={n.key} icon={n.icon} label={n.label} active={aba===n.key} collapsed={collapsed} onClick={()=>irPara(n.key)} />
