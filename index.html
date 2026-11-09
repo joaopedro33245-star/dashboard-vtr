@@ -5694,8 +5694,132 @@ function grupoDoCliente(nome) {
   return "outros";
 }
 
-function AnaliseEventosTab({ clients, eventosSaude }) {
+// ── Detalhe do cliente: semana a semana + disparos e zonas que mais dispararam ──
+function zonaDoDisparo(desc) {
+  const z = String(desc || "").trim().replace(/^(ALARME|DISPARO)\s*[-–]?\s*(24\s*HORAS\s*[-–]?\s*)?/i, "").replace(/\s+/g, " ").trim();
+  return z || "(sem nome de zona)";
+}
+function ClienteEventosModal({ cliente, eventosSaude, semanaInicial, supabaseClient, onClose }) {
+  const th = { padding:"9px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap" };
+  const td = { padding:"9px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)" };
+  useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+
+  // semana a semana (linhas resumidas da Saúde do Cliente)
+  const porSemana = useMemo(() => {
+    const m = {};
+    for (const e of eventosSaude) {
+      if (e.codigo_cliente !== cliente.codigo || e.filial !== cliente.filial) continue;
+      const c = categoriaDoEvento(e.evento); if (!c) continue;
+      const dt = parseDataHora(e.data_hora); if (!dt) continue;
+      const w = getWeekKey(dt); const x = m[w] = m[w] || {};
+      x[c] = (x[c] || 0) + (e.qtd || 1);
+    }
+    return m;
+  }, [eventosSaude, cliente]);
+  const semanas = useMemo(() => Object.keys(porSemana).sort().reverse().slice(0, 8), [porSemana]);
+  const semMenos7 = w => { const d = new Date(w + "T00:00:00"); d.setDate(d.getDate() - 7); return getWeekKey(d); };
+  const [semana, setSemana] = useState(semanaInicial && porSemana[semanaInicial] ? semanaInicial : (semanas[0] || semanaInicial || ""));
+  const semAnt = semana ? semMenos7(semana) : "";
+
+  // disparos da semana escolhida e da anterior (ocorrência por ocorrência, com a zona)
+  const [evs, setEvs] = useState(null); const [erro, setErro] = useState("");
+  useEffect(() => {
+    if (!semana || !supabaseClient) return;
+    let vivo = true; setEvs(null); setErro("");
+    const ini = new Date(semAnt + "T00:00:00"), fim = new Date(semana + "T00:00:00"); fim.setDate(fim.getDate() + 7);
+    supabaseClient.rpc("segware_cliente_eventos", { p_codigo:cliente.codigo, p_filial:cliente.filial, p_desde:ini.toISOString(), p_ate:fim.toISOString() })
+      .then(({ data, error }) => { if (!vivo) return; if (error) setErro(error.message); else setEvs(data || []); });
+    return () => { vivo = false; };
+  }, [semana, semAnt, cliente, supabaseClient]);
+  const iniSemana = semana ? new Date(semana + "T00:00:00").getTime() : 0;
+  const disparos = useMemo(() => (evs || []).filter(e => e.categoria === "disparos"), [evs]);
+  const dispSemana = useMemo(() => disparos.filter(e => new Date(e.ts).getTime() >= iniSemana), [disparos, iniSemana]);
+  const zonas = useMemo(() => {
+    const m = {};
+    for (const e of disparos) {
+      const z = zonaDoDisparo(e.descricao); const x = m[z] = m[z] || { zona:z, atual:0, anterior:0 };
+      if (new Date(e.ts).getTime() >= iniSemana) x.atual++; else x.anterior++;
+    }
+    return Object.values(m).sort((a, b) => b.atual - a.atual || b.anterior - a.anterior);
+  }, [disparos, iniSemana]);
+  const maxZona = Math.max(1, ...zonas.map(z => z.atual));
+  const semDescricao = disparos.length > 0 && disparos.every(e => !e.descricao);
+  const fmt = ts => new Date(ts).toLocaleString("pt-BR", { weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:1000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1080px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, padding:"18px 22px", borderBottom:"1px solid var(--border)" }}>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800 }}>{cliente.nome}</div>
+            <div style={{ fontSize:12, color:"rgba(var(--ink),0.5)", fontFamily:"monospace" }}>{cliente.codigo} · {cliente.filial}</div>
+          </div>
+          <button onClick={onClose} style={{ border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14 }}>✕ Fechar</button>
+        </div>
+
+        <div style={{ padding:"16px 22px 4px", fontWeight:700, fontSize:15 }}>📅 Semana a semana</div>
+        <div style={{ padding:"0 22px 8px", fontSize:12, color:"rgba(var(--ink),0.5)" }}>Variação contra a semana anterior · clique numa semana para ver os disparos e as zonas dela</div>
+        <div className="table-scroll" style={{ padding:"0 10px" }}><table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead><tr><th style={th}>Semana</th>{CATEGORIAS_EVENTO.map(c => <th key={c.key} style={{ ...th, textAlign:"right" }}>{c.icone} {c.label}</th>)}</tr></thead>
+          <tbody>{semanas.length === 0 ? <tr><td style={td} colSpan={5}>Sem eventos nas últimas semanas.</td></tr> : semanas.map(w => {
+            const ant = porSemana[semMenos7(w)] || {}, x = porSemana[w] || {}, sel = w === semana;
+            return (
+              <tr key={w} onClick={() => setSemana(w)} style={{ cursor:"pointer", background: sel ? "rgba(var(--ink),0.06)" : "transparent" }}>
+                <td style={{ ...td, fontWeight:700, whiteSpace:"nowrap", borderLeft:"3px solid " + (sel ? "#ef4444" : "transparent") }}>{weekLabel(w)}</td>
+                {CATEGORIAS_EVENTO.map(c => <td key={c.key} style={{ ...td, textAlign:"right", whiteSpace:"nowrap" }}><b>{x[c.key] || 0}</b> <VariacaoTag atual={x[c.key] || 0} anterior={ant[c.key] || 0} /></td>)}
+              </tr>
+            );
+          })}</tbody>
+        </table></div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))", gap:16, padding:"18px 22px 22px" }}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:2 }}>🎯 Zonas que mais dispararam</div>
+            <div style={{ fontSize:12, color:"rgba(var(--ink),0.5)", marginBottom:8 }}>{semana ? weekLabel(semana) : "—"} · comparado com {semAnt ? weekLabel(semAnt) : "—"}</div>
+            {erro ? <div style={{ fontSize:13, color:"#ef4444" }}>Erro: {erro}</div> : evs === null ? <div style={{ fontSize:13, color:"rgba(var(--ink),0.5)" }}>Carregando…</div> :
+              zonas.length === 0 ? <div style={{ fontSize:13, color:"rgba(var(--ink),0.5)" }}>Nenhum disparo nessas duas semanas.</div> : (
+              <div>
+                {semDescricao && <div style={{ fontSize:12, color:"#f59e0b", marginBottom:8 }}>A descrição dos disparos desta semana ainda está sendo carregada — volte em alguns minutos.</div>}
+                <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                  <thead><tr><th style={th}>Zona</th><th style={{ ...th, textAlign:"right" }}>Semana</th><th style={{ ...th, textAlign:"right" }}>Anterior</th><th style={{ ...th, textAlign:"right" }}>Variação</th></tr></thead>
+                  <tbody>{zonas.slice(0, 20).map((z, i) => (
+                    <tr key={z.zona}>
+                      <td style={td}>
+                        <div style={{ fontWeight: i < 3 && z.atual > 0 ? 700 : 500 }}>{i < 3 && z.atual > 0 ? ["🥇","🥈","🥉"][i] + " " : ""}{z.zona}</div>
+                        <div style={{ height:5, borderRadius:99, background:"rgba(var(--ink),0.06)", marginTop:5 }}><div style={{ width:(z.atual / maxZona * 100) + "%", height:"100%", borderRadius:99, background:"#ef4444" }} /></div>
+                      </td>
+                      <td style={{ ...td, textAlign:"right", fontWeight:800 }}>{z.atual}</td>
+                      <td style={{ ...td, textAlign:"right", color:"rgba(var(--ink),0.55)" }}>{z.anterior}</td>
+                      <td style={{ ...td, textAlign:"right" }}><VariacaoTag atual={z.atual} anterior={z.anterior} /></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:2 }}>🚨 Disparos da semana ({dispSemana.length})</div>
+            <div style={{ fontSize:12, color:"rgba(var(--ink),0.5)", marginBottom:8 }}>Do mais recente para o mais antigo</div>
+            <div style={{ maxHeight:420, overflowY:"auto", border:"1px solid var(--border)", borderRadius:10 }}>
+              {evs === null ? <div style={{ padding:12, fontSize:13, color:"rgba(var(--ink),0.5)" }}>Carregando…</div> :
+                dispSemana.length === 0 ? <div style={{ padding:12, fontSize:13, color:"rgba(var(--ink),0.5)" }}>Nenhum disparo nesta semana.</div> :
+                dispSemana.slice(0, 500).map((e, i) => (
+                  <div key={i} style={{ display:"flex", gap:12, padding:"8px 12px", borderTop: i ? "1px solid rgba(var(--ink),0.05)" : "none", fontSize:12.5 }}>
+                    <span style={{ fontFamily:"monospace", color:"rgba(var(--ink),0.55)", whiteSpace:"nowrap" }}>{fmt(e.ts)}</span>
+                    <span>{e.descricao || zonaDoDisparo(e.descricao)}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
   const [grupo, setGrupo] = useState("todos");
+  const [clienteSel, setClienteSel] = useState(null);
   const [filial, setFilial] = useState("Todas");
   const [cat, setCat] = useState("disparos");
   const [semanaSel, setSemanaSel] = useState("");
@@ -5717,6 +5841,11 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
     return out;
   }, [eventosSaude, filial, nomeMap]);
   const base = useMemo(() => grupo === "todos" ? baseAll : baseAll.filter(r => r.g === grupo), [baseAll, grupo]);
+  const clientesLista = useMemo(() => {
+    const m = {};
+    for (const r of baseAll) if (!m[r.chave]) m[r.chave] = { chave:r.chave, codigo:r.codigo, filial:r.filial, nome:nomeMap[r.chave] || r.nome || r.codigo };
+    return Object.values(m).map(c => ({ ...c, label: c.nome + " · " + c.codigo + " · " + c.filial })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [baseAll, nomeMap]);
   // totais semana × categoria × tipo de cliente (tabela de comparação)
   const totGrupos = useMemo(() => { const t = {}; for (const r of baseAll) { const k = r.semana + "|" + r.cat + "|" + r.g; t[k] = (t[k] || 0) + r.q; } return t; }, [baseAll]);
   const tg = (s, c, g) => g === "todos" ? GRUPOS_CLIENTE.reduce((n, x) => n + (totGrupos[s + "|" + c + "|" + x.key] || 0), 0) : (totGrupos[s + "|" + c + "|" + g] || 0);
@@ -5785,6 +5914,8 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
         <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
           <select value={semana} onChange={e => setSemanaSel(e.target.value)} style={selStyle}>{semanas.map(s => <option key={s} value={s}>Semana {weekLabel(s)}</option>)}</select>
           <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+          <input list="vtr-clientes-eventos" placeholder="🔍 Abrir cliente (nome ou código)…" onChange={e => { const x = clientesLista.find(c => c.label === e.target.value); if (x) { setClienteSel(x); e.target.value = ""; } }} style={{ ...selStyle, cursor:"text", minWidth:240 }} />
+          <datalist id="vtr-clientes-eventos">{clientesLista.map(c => <option key={c.chave} value={c.label} />)}</datalist>
           <select value={grupo} onChange={e => setGrupo(e.target.value)} style={selStyle}><option value="todos">Todos os clientes</option>{GRUPOS_CLIENTE.map(g => <option key={g.key} value={g.key}>{g.label}</option>)}</select>
         </div>
       </div>
@@ -5847,7 +5978,7 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
               <tbody>{ranking.top.map((x, i) => {
                 const sit = x.anterior === 0 ? ["Novo no ranking", "#f59e0b"] : x.atual > x.anterior ? ["Aumentou", "#ef4444"] : x.atual < x.anterior ? ["Diminuiu", "#10b981"] : ["Igual", "rgba(var(--ink),0.45)"];
                 return (
-                  <tr key={x.chave}>
+                  <tr key={x.chave} onClick={() => setClienteSel(x)} title="Ver semana a semana e zonas que mais dispararam" style={{ cursor:"pointer" }}>
                     <td style={{ ...td, fontWeight:800, color:i < 3 ? catAtual.cor : "rgba(var(--ink),0.4)" }}>{i + 1}º</td>
                     <td style={td}><div style={{ fontWeight:600 }}>{x.nome}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)", fontFamily:"monospace" }}>{x.codigo} · {x.filial}{x.posAnt ? ` · era ${x.posAnt}º` : ""}</div></td>
                     <td style={{ ...td, textAlign:"right", fontWeight:800 }}>{x.atual}</td>
@@ -5879,7 +6010,8 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
           </Card>
         </div>
       </div>
-      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes".</div>
+      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes". Clique num cliente para ver semana a semana e as zonas que mais dispararam.</div>
+      {clienteSel && <ClienteEventosModal cliente={clienteSel} eventosSaude={eventosSaude} semanaInicial={semana} supabaseClient={supabaseClient} onClose={() => setClienteSel(null)} />}
     </div>
   );
 }
@@ -6680,7 +6812,7 @@ function App() {
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
-      {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} />}
+      {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
         confirmLimparSaude={confirmLimparSaude} setConfirmLimparSaude={setConfirmLimparSaude} confirmTextSaude={confirmTextSaude} setConfirmTextSaude={setConfirmTextSaude} handleLimparEventosSaude={handleLimparEventosSaude}
