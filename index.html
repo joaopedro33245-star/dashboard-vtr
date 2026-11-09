@@ -5705,23 +5705,71 @@ function periodoCentral(p) {
   if (p === "30d") return [d(-29), new Date()];
   return [hoje, new Date()];
 }
+// Cada pessoa tem um login por base ("Samuel Agua Fria", "Samuel Aldeota", "Samuel Geral"...), às vezes com número,
+// "TWO" ou maiúsculas diferentes. Tira as palavras de base/estação e agrupa pelo nome da pessoa.
+const normOp = n => String(n || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const ESTACOES_OP = /\b(BASE|BS|GERAL|SECOPI|ALDEOTA\d*|FATIMA\d*|AGUA|AGRA|FRIA|PARQUE|SOLAR|PORTARIA|VIRTUAL|MARANHAO|MA|AM|AMMA|FA|CEARA|CE\d*|TWO|DOIS|II|PL\s+\w+|APOIO|TRIAGEM)\b/g;
+function tokensOperador(n) {
+  return normOp(n).replace(/\(.*?\)/g, " ").replace(/_/g, " ").replace(/(SECOPI|FATIMA|ALDEOTA|GERAL)/g, " $1")
+    .replace(ESTACOES_OP, " ").replace(/\d+/g, " ").replace(/[^A-Z ]/g, " ").split(/\s+/).filter(Boolean);
+}
+function tipoOperador(n) {
+  const x = normOp(n);
+  if (/GUARD\s*IA|\bBOT\b|ROBO/.test(x)) return "ia";
+  if (/^(VTR?|MOTO)[\s\-\d]|\bVTR\b/.test(x)) return "viatura";
+  if (/BACKOFFICE|GESTOR|PUXA EVENTOS/.test(x)) return "outros";
+  if (/APOIO|TRIAGEM/.test(x)) return "apoio";
+  return "humano";
+}
+const tituloOp = s => s.toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase()).replace(/\bJoao\b/g, "João").replace(/\bJosue\b/g, "Josué").replace(/\bTania\b/g, "Tânia");
+function agruparOperadores(lista) {
+  const tk = {}, porPrimeiro = {};
+  for (const o of lista) {
+    const t = tokensOperador(o.nome); tk[o.nome] = t;
+    if (t.length) (porPrimeiro[t[0]] = porPrimeiro[t[0]] || new Set()).add(t[1] || "");
+  }
+  const chave = n => {
+    const t = tk[n], tipo = tipoOperador(n);
+    if (tipo === "viatura" || tipo === "ia" || tipo === "outros" || !t.length) return tipo + "|" + normOp(n);
+    // mesmo primeiro nome com sobrenomes diferentes (João Pedro × João Victor) = pessoas diferentes
+    const sobren = [...porPrimeiro[t[0]]].filter(Boolean);
+    return tipo + "|" + (sobren.length > 1 ? (t[1] ? t[0] + " " + t[1] : t[0] + " ?") : t[0]);
+  };
+  const m = {};
+  for (const o of lista) {
+    const k = chave(o.nome);
+    const g = m[k] = m[k] || { chave:k, nomes:[], assumiu:0, fechou:0, comentarios:0, somaAt:0, nAt:0, somaTot:0, nTot:0 };
+    g.nomes.push(o.nome);
+    g.assumiu += o.assumiu; g.fechou += o.fechou; g.comentarios += o.comentarios;
+    if (o.med_atender != null && o.assumiu) { g.somaAt += o.med_atender * o.assumiu; g.nAt += o.assumiu; }
+    if (o.med_atendimento != null && o.fechou) { g.somaTot += o.med_atendimento * o.fechou; g.nTot += o.fechou; }
+  }
+  return Object.values(m).map(g => {
+    const [tipo, base] = [g.chave.split("|")[0], g.chave.split("|").slice(1).join("|")];
+    const nome = g.nomes.length === 1 ? g.nomes[0] : (base.endsWith(" ?") ? tituloOp(base.slice(0, -2)) + " (login sem sobrenome)" : tituloOp(base));
+    return { nome, nomes:g.nomes, tipo, assumiu:g.assumiu, fechou:g.fechou, comentarios:g.comentarios,
+      med_atender: g.nAt ? Math.round(g.somaAt / g.nAt) : null, med_atendimento: g.nTot ? Math.round(g.somaTot / g.nTot) : null };
+  });
+}
+const TIPOS_OPERADOR = [["humano","👤 Operadores"],["apoio","🧭 Apoio / triagem"],["ia","🤖 IA"],["viatura","🚓 Viaturas"],["outros","🗂️ Outros"]];
 const PERIODOS_CENTRAL = [["hoje","Hoje"],["ontem","Ontem"],["semana","Esta semana"],["semanaPassada","Semana passada"],["7d","Últimos 7 dias"],["30d","Últimos 30 dias"]];
 
-function OperadorModal({ nome, periodo, filial, supabaseClient, onClose }) {
+function OperadorModal({ nome, nomes, periodo, filial, supabaseClient, onClose }) {
   const [rows, setRows] = useState(null); const [erro, setErro] = useState("");
   useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   useEffect(() => {
     const [a, b] = periodoCentral(periodo);
-    supabaseClient.rpc("segware_central_operador", { p_nome:nome, p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })
-      .then(({ data, error }) => { if (error) setErro(error.message); else setRows(data || []); });
-  }, [nome, periodo, filial, supabaseClient]);
+    const logins = (nomes && nomes.length) ? nomes : [nome];
+    Promise.all(logins.map(n => supabaseClient.rpc("segware_central_operador", { p_nome:n, p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })))
+      .then(rs => { const e = rs.find(r => r.error); if (e) { setErro(e.error.message); return; } setRows(rs.flatMap(r => r.data || []).sort((x, y) => new Date(y.recebida) - new Date(x.recebida))); });
+  }, [nome, nomes, periodo, filial, supabaseClient]);
   const th = { padding:"8px 10px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", position:"sticky", top:0, background:"var(--card)" };
   const td = { padding:"8px 10px", fontSize:12.5, borderBottom:"1px solid rgba(var(--ink),0.05)" };
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1100px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)" }}>
-          <div><div style={{ fontSize:18, fontWeight:800 }}>🎧 {nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{(PERIODOS_CENTRAL.find(p => p[0] === periodo) || [])[1]}{filial !== "Todas" ? " · " + filial : ""}{rows ? " · " + rows.length + " ocorrência(s)" : ""}</div></div>
+          <div><div style={{ fontSize:18, fontWeight:800 }}>🎧 {nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{nomes && nomes.length > 1 ? "Logins: " + nomes.join(", ") + " · " : ""}{(PERIODOS_CENTRAL.find(p => p[0] === periodo) || [])[1]}{filial !== "Todas" ? " · " + filial : ""}{rows ? " · " + rows.length + " ocorrência(s)" : ""}</div></div>
           <button onClick={onClose} style={{ border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14 }}>✕ Fechar</button>
         </div>
         <div style={{ maxHeight:"70vh", overflowY:"auto" }}>
@@ -5754,6 +5802,7 @@ function CentralTab({ supabaseClient }) {
   const [ordem, setOrdem] = useState("total");
   const [operadorSel, setOperadorSel] = useState(null);
   const [buscaOp, setBuscaOp] = useState("");
+  const [tipoOp, setTipoOp] = useState("humano");
   const chartRef = useRef(null), chartInst = useRef(null);
 
   const carregar = useCallback(() => {
@@ -5785,11 +5834,13 @@ function CentralTab({ supabaseClient }) {
   }, [horas]);
 
   const k = (dados && dados.kpi) || {};
+  const opsTodos = useMemo(() => agruparOperadores((dados && dados.operadores) || []), [dados]);
+  const contTipo = t => opsTodos.filter(o => o.tipo === t).length;
   const ops = useMemo(() => {
-    const l = ((dados && dados.operadores) || []).filter(o => !buscaOp || o.nome.toLowerCase().includes(buscaOp.toLowerCase()));
+    const l = opsTodos.filter(o => o.tipo === tipoOp).filter(o => !buscaOp || o.nomes.some(n => n.toLowerCase().includes(buscaOp.toLowerCase())));
     const f = { total:o => o.assumiu + o.fechou, assumiu:o => o.assumiu, fechou:o => o.fechou, comentarios:o => o.comentarios, atender:o => -(o.med_atender ?? 1e9), atendimento:o => -(o.med_atendimento ?? 1e9) }[ordem];
     return l.slice().sort((a, b) => f(b) - f(a));
-  }, [dados, ordem, buscaOp]);
+  }, [opsTodos, ordem, buscaOp, tipoOp]);
   const filiais = ["Todas", ...(((dados && dados.filiais_disponiveis) || []).slice().sort())];
   const pct1min = k.tratadas ? Math.round(k.atendidas_1min / k.tratadas * 100) : 0;
   const selStyle = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
@@ -5835,15 +5886,18 @@ function CentralTab({ supabaseClient }) {
 
       <Card>
         <div style={{ padding:"16px 20px 4px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-          <div style={{ fontWeight:700, fontSize:15 }}>👥 Operadores <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· clique no operador para ver as ocorrências dele · clique no título da coluna para ordenar</span></div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+            {TIPOS_OPERADOR.map(([t, l]) => <button key={t} onClick={() => setTipoOp(t)} style={{ padding:"6px 13px", borderRadius:999, border:"1px solid " + (tipoOp === t ? "#0ea5e9" : "var(--border)"), background: tipoOp === t ? "rgba(14,165,233,0.12)" : "var(--card)", color:"var(--tx)", fontSize:13, fontWeight:700, cursor:"pointer" }}>{l} <span style={{ opacity:0.6 }}>({contTipo(t)})</span></button>)}
+            <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· clique no nome para ver as ocorrências · clique no título da coluna para ordenar</span>
+          </div>
           <input value={buscaOp} onChange={e => setBuscaOp(e.target.value)} placeholder="🔍 Buscar operador…" style={{ ...selStyle, cursor:"text", minWidth:200 }} />
         </div>
         <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse", marginTop:6 }}>
           <thead><tr>{thOrd("total", "Operador", true)}{thOrd("assumiu", "Assumiu")}{thOrd("fechou", "Fechou")}{thOrd("comentarios", "Comentários")}{thOrd("atender", "Média até atender")}{thOrd("atendimento", "Média de atendimento")}</tr></thead>
           <tbody>{ops.length === 0 ? <tr><td style={{ ...td, textAlign:"left" }} colSpan={6}>{carregando ? "Carregando…" : "Nenhuma ocorrência tratada no período."}</td></tr> : ops.map((o, i) => (
-            <tr key={o.nome} onClick={() => setOperadorSel(o.nome)} style={{ cursor:"pointer" }}>
+            <tr key={o.nome} onClick={() => setOperadorSel(o)} style={{ cursor:"pointer" }}>
               <td style={{ ...td, textAlign:"left" }}>
-                <div style={{ fontWeight:700 }}>{i < 3 && ordem === "total" ? ["🥇","🥈","🥉"][i] + " " : ""}{o.nome}</div>
+                <div style={{ fontWeight:700 }}>{i < 3 && ordem === "total" ? ["🥇","🥈","🥉"][i] + " " : ""}{o.nome}{o.nomes.length > 1 ? <span title={o.nomes.join("\n")} style={{ fontWeight:500, fontSize:11, color:"rgba(var(--ink),0.5)", marginLeft:6 }}>({o.nomes.length} logins)</span> : null}</div>
                 <div style={{ height:5, borderRadius:99, background:"rgba(var(--ink),0.06)", marginTop:5, maxWidth:260 }}><div style={{ width:((o.assumiu + o.fechou) / maxOp * 100) + "%", height:"100%", borderRadius:99, background:"#0ea5e9" }} /></div>
               </td>
               <td style={{ ...td, fontWeight:700 }}>{o.assumiu}</td>
@@ -5857,9 +5911,9 @@ function CentralTab({ supabaseClient }) {
       </Card>
       <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
         Fonte: Segware (sincronização automática). Considera só as ocorrências que chegaram na central — as fechadas pela configuração da CUC ou com monitoramento desabilitado ficam de fora.
-        "Até atender" = da chegada da ocorrência até um operador assumir; "atendimento" = da chegada até o fechamento. "Fechadas pelo sistema" = nenhum operador assumiu (ex.: fechamento automático na restauração).
+        "Até atender" = da chegada da ocorrência até um operador assumir; "atendimento" = da chegada até o fechamento. "Fechadas pelo sistema" = nenhum operador assumiu (ex.: fechamento automático na restauração). Os logins de uma mesma pessoa nas várias bases (ex.: "Samuel Aldeota", "Samuel Secopi", "Samuel Geral") aparecem juntos — passe o mouse em "(N logins)" para ver quais; IA (GuardIA), apoio/triagem, viaturas e outros logins ficam em abas separadas.
       </div>
-      {operadorSel && <Portal><OperadorModal nome={operadorSel} periodo={periodo} filial={filial} supabaseClient={supabaseClient} onClose={() => setOperadorSel(null)} /></Portal>}
+      {operadorSel && <Portal><OperadorModal nome={operadorSel.nome} nomes={operadorSel.nomes} periodo={periodo} filial={filial} supabaseClient={supabaseClient} onClose={() => setOperadorSel(null)} /></Portal>}
     </div>
   );
 }
