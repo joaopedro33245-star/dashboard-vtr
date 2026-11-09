@@ -14,7 +14,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard VTR — Central de Monitoramento</title>
+  <title>Monitoramento — Servis</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script>
@@ -4338,7 +4338,7 @@ function LoginScreen({ onLogin }) {
               <img src={LOGO_AZUL} alt="Servis" style={{ width:"100%",height:"100%",objectFit:"cover" }} />
             </div>
           <h1 style={{ fontSize:22,fontWeight:800,color:"var(--tx)",margin:"0 0 6px",letterSpacing:"-0.5px" }}>Central de Monitoramento</h1>
-          <p style={{ fontSize:13,color:"rgba(var(--ink),0.3)",margin:0 }}>Dashboard Executivo de VTR</p>
+          <p style={{ fontSize:13,color:"rgba(var(--ink),0.3)",margin:0 }}>Painel de Monitoramento</p>
         </div>
         <div style={{ background:"var(--card)",border:"1px solid var(--border)",borderRadius:14,padding:32 }}>
           <h2 style={{ fontSize:16,fontWeight:700,color:"var(--tx)",margin:"0 0 24px" }}>Entrar na plataforma</h2>
@@ -5681,6 +5681,189 @@ function VariacaoTag({ atual, anterior, grande }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// CENTRAL — tempo de atendimento e desempenho dos operadores (dados da Segware)
+// ═══════════════════════════════════════════════════════════════
+// modais renderizados direto no <body> (a área de conteúdo tem animação que prende o position:fixed)
+const Portal = ({ children }) => ReactDOM.createPortal(children, document.body);
+function fmtDur(seg) {
+  if (seg === null || seg === undefined || isNaN(seg)) return "—";
+  seg = Math.round(Number(seg));
+  if (seg < 60) return seg + "s";
+  if (seg < 3600) return Math.floor(seg / 60) + "min " + String(seg % 60).padStart(2, "0") + "s";
+  return Math.floor(seg / 3600) + "h " + String(Math.floor(seg % 3600 / 60)).padStart(2, "0") + "min";
+}
+function periodoCentral(p) {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const d = n => { const x = new Date(hoje); x.setDate(x.getDate() + n); return x; };
+  const seg = (() => { const x = new Date(hoje); const w = x.getDay(); x.setDate(x.getDate() + (w === 0 ? -6 : 1 - w)); return x; })();
+  if (p === "hoje") return [hoje, new Date()];
+  if (p === "ontem") return [d(-1), hoje];
+  if (p === "semana") return [seg, new Date()];
+  if (p === "semanaPassada") { const a = new Date(seg); a.setDate(a.getDate() - 7); return [a, seg]; }
+  if (p === "7d") return [d(-6), new Date()];
+  if (p === "30d") return [d(-29), new Date()];
+  return [hoje, new Date()];
+}
+const PERIODOS_CENTRAL = [["hoje","Hoje"],["ontem","Ontem"],["semana","Esta semana"],["semanaPassada","Semana passada"],["7d","Últimos 7 dias"],["30d","Últimos 30 dias"]];
+
+function OperadorModal({ nome, periodo, filial, supabaseClient, onClose }) {
+  const [rows, setRows] = useState(null); const [erro, setErro] = useState("");
+  useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  useEffect(() => {
+    const [a, b] = periodoCentral(periodo);
+    supabaseClient.rpc("segware_central_operador", { p_nome:nome, p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })
+      .then(({ data, error }) => { if (error) setErro(error.message); else setRows(data || []); });
+  }, [nome, periodo, filial, supabaseClient]);
+  const th = { padding:"8px 10px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", position:"sticky", top:0, background:"var(--card)" };
+  const td = { padding:"8px 10px", fontSize:12.5, borderBottom:"1px solid rgba(var(--ink),0.05)" };
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1100px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)" }}>
+          <div><div style={{ fontSize:18, fontWeight:800 }}>🎧 {nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{(PERIODOS_CENTRAL.find(p => p[0] === periodo) || [])[1]}{filial !== "Todas" ? " · " + filial : ""}{rows ? " · " + rows.length + " ocorrência(s)" : ""}</div></div>
+          <button onClick={onClose} style={{ border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14 }}>✕ Fechar</button>
+        </div>
+        <div style={{ maxHeight:"70vh", overflowY:"auto" }}>
+          {erro ? <div style={{ padding:20, color:"#ef4444" }}>Erro: {erro}</div> : rows === null ? <div style={{ padding:20, color:"rgba(var(--ink),0.5)" }}>Carregando…</div> : (
+            <table style={{ width:"100%", borderCollapse:"collapse" }}>
+              <thead><tr><th style={th}>Recebida</th><th style={th}>Cliente</th><th style={th}>Evento</th><th style={th}>Participação</th><th style={{ ...th, textAlign:"right" }}>Até atender</th><th style={{ ...th, textAlign:"right" }}>Atendimento</th></tr></thead>
+              <tbody>{rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={{ ...td, whiteSpace:"nowrap", fontFamily:"monospace" }}>{new Date(r.recebida).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</td>
+                  <td style={td}><div style={{ fontWeight:600 }}>{r.nome_cliente}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)", fontFamily:"monospace" }}>{r.codigo_cliente} · {r.filial}</div></td>
+                  <td style={td}>{r.descricao}{r.teve_desl ? <span title="Teve deslocamento de viatura"> 🚓</span> : null}</td>
+                  <td style={{ ...td, whiteSpace:"nowrap" }}>{r.papel}{r.comentarios ? " (" + r.comentarios + " coment.)" : ""}</td>
+                  <td style={{ ...td, textAlign:"right", whiteSpace:"nowrap" }}>{fmtDur(r.t_ate_atender)}</td>
+                  <td style={{ ...td, textAlign:"right", whiteSpace:"nowrap" }}>{fmtDur(r.t_atendimento)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CentralTab({ supabaseClient }) {
+  const [periodo, setPeriodo] = useState("hoje");
+  const [filial, setFilial] = useState("Todas");
+  const [turno, setTurno] = useState("todos");
+  const [dados, setDados] = useState(null); const [erro, setErro] = useState(""); const [carregando, setCarregando] = useState(false);
+  const [ordem, setOrdem] = useState("total");
+  const [operadorSel, setOperadorSel] = useState(null);
+  const [buscaOp, setBuscaOp] = useState("");
+  const chartRef = useRef(null), chartInst = useRef(null);
+
+  const carregar = useCallback(() => {
+    const [a, b] = periodoCentral(periodo);
+    setCarregando(true); setErro("");
+    supabaseClient.rpc("segware_central_resumo", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial, p_turno: turno === "todos" ? null : turno })
+      .then(({ data, error }) => { setCarregando(false); if (error) setErro(error.message); else setDados(data); });
+  }, [periodo, filial, turno, supabaseClient]);
+  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { if (periodo !== "hoje") return; const iv = setInterval(carregar, 120000); return () => clearInterval(iv); }, [periodo, carregar]);
+
+  const horas = (dados && dados.horas) || [];
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (chartInst.current) chartInst.current.destroy();
+    const H = Array.from({ length:24 }, (_, h) => horas.find(x => x.hora === h) || { hora:h, tratadas:0, med_atender:null });
+    chartInst.current = new Chart(chartRef.current, {
+      data:{ labels:H.map(x => String(x.hora).padStart(2, "0") + "h"), datasets:[
+        { type:"bar", label:"Ocorrências tratadas", data:H.map(x => x.tratadas), backgroundColor:"rgba(14,165,233,0.55)", borderRadius:4, yAxisID:"y" },
+        { type:"line", label:"Tempo médio até atender (s)", data:H.map(x => x.med_atender), borderColor:"#ef4444", backgroundColor:"#ef4444", tension:0.35, pointRadius:2, borderWidth:2, yAxisID:"y1", spanGaps:true },
+      ] },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ position:"bottom", labels:{ color:"rgba(var(--ink),0.6)", usePointStyle:true, boxWidth:8 } } },
+        scales:{ x:{ ticks:{ color:"rgba(var(--ink),0.5)" }, grid:{ display:false } },
+          y:{ beginAtZero:true, ticks:{ color:"rgba(var(--ink),0.5)", precision:0 }, grid:{ color:"rgba(var(--ink),0.06)" }, title:{ display:true, text:"ocorrências", color:"rgba(var(--ink),0.5)" } },
+          y1:{ beginAtZero:true, position:"right", ticks:{ color:"#ef4444" }, grid:{ display:false }, title:{ display:true, text:"segundos", color:"#ef4444" } } } }
+    });
+    return () => { if (chartInst.current) chartInst.current.destroy(); };
+  }, [horas]);
+
+  const k = (dados && dados.kpi) || {};
+  const ops = useMemo(() => {
+    const l = ((dados && dados.operadores) || []).filter(o => !buscaOp || o.nome.toLowerCase().includes(buscaOp.toLowerCase()));
+    const f = { total:o => o.assumiu + o.fechou, assumiu:o => o.assumiu, fechou:o => o.fechou, comentarios:o => o.comentarios, atender:o => -(o.med_atender ?? 1e9), atendimento:o => -(o.med_atendimento ?? 1e9) }[ordem];
+    return l.slice().sort((a, b) => f(b) - f(a));
+  }, [dados, ordem, buscaOp]);
+  const filiais = ["Todas", ...(((dados && dados.filiais_disponiveis) || []).slice().sort())];
+  const pct1min = k.tratadas ? Math.round(k.atendidas_1min / k.tratadas * 100) : 0;
+  const selStyle = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
+  const th = { padding:"10px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"right", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", cursor:"pointer", userSelect:"none" };
+  const td = { padding:"10px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)", textAlign:"right" };
+  const thOrd = (key, label, left) => <th style={{ ...th, textAlign:left ? "left" : "right", color: ordem === key ? "var(--tx)" : th.color }} onClick={() => setOrdem(key)}>{label}{ordem === key ? " ▼" : ""}</th>;
+  const maxOp = Math.max(1, ...ops.map(o => o.assumiu + o.fechou));
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center", marginBottom:18 }}>
+        <select value={periodo} onChange={e => setPeriodo(e.target.value)} style={selStyle}>{PERIODOS_CENTRAL.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+        <select value={turno} onChange={e => setTurno(e.target.value)} style={selStyle}><option value="todos">Dia e noite</option><option value="dia">Turno dia (07h–19h)</option><option value="noite">Turno noite (19h–07h)</option></select>
+        <button onClick={carregar} style={{ ...selStyle, fontWeight:600 }}>{carregando ? "Atualizando…" : "↻ Atualizar"}</button>
+        {periodo === "hoje" && <span style={{ fontSize:12, color:"rgba(var(--ink),0.45)" }}>atualiza sozinho a cada 2 min</span>}
+      </div>
+      {erro && <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", color:"#ef4444", fontSize:13 }}>Erro: {erro}</div>}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:18 }}>
+        <KPICard label="Ocorrências tratadas" value={(k.tratadas || 0).toLocaleString("pt-BR")} sub={(k.abertas || 0) + " ainda abertas"} icon="🎧" accent="#0ea5e9" />
+        <KPICard label="Fechadas pelo sistema" value={(k.automaticas || 0).toLocaleString("pt-BR")} sub={k.total ? Math.round(k.automaticas / k.total * 100) + "% do total que chegou" : "—"} icon="🤖" accent="#64748b" />
+        <KPICard label="Tempo até atender" value={fmtDur(k.med_atender)} sub={"mediana " + fmtDur(k.mediana_atender) + " · " + pct1min + "% em até 1 min"} icon="⏱️" accent="#f59e0b" />
+        <KPICard label="Tempo de atendimento" value={fmtDur(k.med_atendimento)} sub={"em espera (média): " + fmtDur(k.med_espera)} icon="🕒" accent="#8b5cf6" />
+        <KPICard label="Deslocamentos" value={(k.deslocamentos || 0).toLocaleString("pt-BR")} sub={"viatura até o local: " + fmtDur(k.med_viatura)} icon="🚓" accent="#10b981" />
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1.6fr) minmax(280px,1fr)", gap:16, marginBottom:16 }} className="grid-eventos">
+        <Card>
+          <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>📊 Ocorrências por hora × tempo até atender</div>
+          <div style={{ position:"relative", height:280, padding:"0 14px 14px" }}><canvas ref={chartRef} /></div>
+        </Card>
+        <Card>
+          <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>🏢 Por filial</div>
+          <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr><th style={{ ...th, textAlign:"left", cursor:"default" }}>Filial</th><th style={{ ...th, cursor:"default" }}>Tratadas</th><th style={{ ...th, cursor:"default" }}>Até atender</th><th style={{ ...th, cursor:"default" }}>Atendimento</th></tr></thead>
+            <tbody>{((dados && dados.filiais) || []).map(f => (
+              <tr key={f.filial}><td style={{ ...td, textAlign:"left", fontWeight:600 }}>{f.filial}</td><td style={td}>{f.tratadas}</td><td style={td}>{fmtDur(f.med_atender)}</td><td style={td}>{fmtDur(f.med_atendimento)}</td></tr>
+            ))}</tbody>
+          </table></div>
+        </Card>
+      </div>
+
+      <Card>
+        <div style={{ padding:"16px 20px 4px", display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+          <div style={{ fontWeight:700, fontSize:15 }}>👥 Operadores <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· clique no operador para ver as ocorrências dele · clique no título da coluna para ordenar</span></div>
+          <input value={buscaOp} onChange={e => setBuscaOp(e.target.value)} placeholder="🔍 Buscar operador…" style={{ ...selStyle, cursor:"text", minWidth:200 }} />
+        </div>
+        <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse", marginTop:6 }}>
+          <thead><tr>{thOrd("total", "Operador", true)}{thOrd("assumiu", "Assumiu")}{thOrd("fechou", "Fechou")}{thOrd("comentarios", "Comentários")}{thOrd("atender", "Média até atender")}{thOrd("atendimento", "Média de atendimento")}</tr></thead>
+          <tbody>{ops.length === 0 ? <tr><td style={{ ...td, textAlign:"left" }} colSpan={6}>{carregando ? "Carregando…" : "Nenhuma ocorrência tratada no período."}</td></tr> : ops.map((o, i) => (
+            <tr key={o.nome} onClick={() => setOperadorSel(o.nome)} style={{ cursor:"pointer" }}>
+              <td style={{ ...td, textAlign:"left" }}>
+                <div style={{ fontWeight:700 }}>{i < 3 && ordem === "total" ? ["🥇","🥈","🥉"][i] + " " : ""}{o.nome}</div>
+                <div style={{ height:5, borderRadius:99, background:"rgba(var(--ink),0.06)", marginTop:5, maxWidth:260 }}><div style={{ width:((o.assumiu + o.fechou) / maxOp * 100) + "%", height:"100%", borderRadius:99, background:"#0ea5e9" }} /></div>
+              </td>
+              <td style={{ ...td, fontWeight:700 }}>{o.assumiu}</td>
+              <td style={{ ...td, fontWeight:700 }}>{o.fechou}</td>
+              <td style={td}>{o.comentarios}</td>
+              <td style={td}>{fmtDur(o.med_atender)}</td>
+              <td style={td}>{fmtDur(o.med_atendimento)}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+      </Card>
+      <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
+        Fonte: Segware (sincronização automática). Considera só as ocorrências que chegaram na central — as fechadas pela configuração da CUC ou com monitoramento desabilitado ficam de fora.
+        "Até atender" = da chegada da ocorrência até um operador assumir; "atendimento" = da chegada até o fechamento. "Fechadas pelo sistema" = nenhum operador assumiu (ex.: fechamento automático na restauração).
+      </div>
+      {operadorSel && <Portal><OperadorModal nome={operadorSel} periodo={periodo} filial={filial} supabaseClient={supabaseClient} onClose={() => setOperadorSel(null)} /></Portal>}
+    </div>
+  );
+}
+
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
   { key:"hiseg",  label:"Hiseg Ceará",  icone:"🏢", cor:"#a855f7" },
@@ -5750,7 +5933,7 @@ function CobrancaModal({ itens, catKey, catLabel, semana, semanaAnt, contexto, s
   const carregandoZonas = catKey === "disparos" && Object.keys(zonas).length < itens.length;
   const btn = { padding:"8px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, fontWeight:600, cursor:"pointer" };
   return (
-    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:1100, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9100, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(760px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)" }}>
           <div><div style={{ fontSize:17, fontWeight:800 }}>📋 Cobrança – {catLabel}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{lista.length} cliente(s){contexto ? " · " + contexto : ""}</div></div>
@@ -5823,7 +6006,7 @@ function ClienteEventosModal({ cliente, eventosSaude, semanaInicial, supabaseCli
   const fmt = ts => new Date(ts).toLocaleString("pt-BR", { weekday:"short", day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" });
 
   return (
-    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:1000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1080px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, padding:"18px 22px", borderBottom:"1px solid var(--border)" }}>
           <div>
@@ -6099,10 +6282,10 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
         </div>
       </div>
       <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Hiseg Ceará = clientes com "Hiseg" no nome (Servis Ceará); Hiseg Bahia = empresa Hiseg Bahia na Segware; rota = área do cadastro do cliente; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes". Clique num cliente para ver semana a semana e as zonas que mais dispararam.</div>
-      {clienteSel && <ClienteEventosModal cliente={clienteSel} eventosSaude={eventosSaude} semanaInicial={semana} supabaseClient={supabaseClient} onClose={() => setClienteSel(null)}
-        onCobranca={(item, sem, semA) => setCobranca({ itens:[item], catKey:"disparos", catLabel:"Disparos", semana:sem, semanaAnt:semA })} />}
-      {cobranca && <CobrancaModal {...cobranca} supabaseClient={supabaseClient} onClose={() => setCobranca(null)}
-        contexto={[filial !== "Todas" ? filial : "", grupo !== "todos" ? (GRUPOS_CLIENTE.find(g => g.key === grupo) || {}).label : "", rota === "todas" ? "" : rota === "sem" ? "Sem rota cadastrada" : "Rota " + rota].filter(Boolean).join(" · ")} />}
+      {clienteSel && <Portal><ClienteEventosModal cliente={clienteSel} eventosSaude={eventosSaude} semanaInicial={semana} supabaseClient={supabaseClient} onClose={() => setClienteSel(null)}
+        onCobranca={(item, sem, semA) => setCobranca({ itens:[item], catKey:"disparos", catLabel:"Disparos", semana:sem, semanaAnt:semA })} /></Portal>}
+      {cobranca && <Portal><CobrancaModal {...cobranca} supabaseClient={supabaseClient} onClose={() => setCobranca(null)}
+        contexto={[filial !== "Todas" ? filial : "", grupo !== "todos" ? (GRUPOS_CLIENTE.find(g => g.key === grupo) || {}).label : "", rota === "todas" ? "" : rota === "sem" ? "Sem rota cadastrada" : "Rota " + rota].filter(Boolean).join(" · ")} /></Portal>}
     </div>
   );
 }
@@ -6274,6 +6457,7 @@ const TAB_TITLES={
   clientes:"Clientes",
   saudeCliente:"Saúde do Cliente",
   analiseEventos:"Análise de Eventos",
+  central:"Central",
   relatorios:"Relatórios",
   importacao:"Importação",
   usuarios:"Usuários",
@@ -6290,6 +6474,7 @@ const TAB_SUBTITLES={
   clientes:"Cadastro e situação financeira dos clientes",
   saudeCliente:"Disparos, queda de energia, bateria, comunicação e clientes sem armar",
   analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
+  central:"Tempo de atendimento, ocorrências e desempenho dos operadores",
   relatorios:"Exportação de dados para planilha",
   importacao:"Importação de planilhas e integração Segware",
   usuarios:"Gestão de usuários do sistema",
@@ -6297,6 +6482,7 @@ const TAB_SUBTITLES={
 const SIDEBAR_NAV=[
   { standalone:true, key:"dashboard", label:"Dashboard", icon:"📊" },
   { groupKey:"operacao", groupLabel:"Operação", groupIcon:"🚦", items:[
+    { key:"central", label:"Central", icon:"🎧", accent:"#0ea5e9" },
     { key:"analiseDeslocamento", label:"Deslocamentos", icon:"🚦", accent:"#6366f1" },
     { key:"portaria", label:"Portaria Inteligente", icon:"🏢", accent:"#8b5cf6", badgeKey:"piCount" },
     { key:"filiais", label:"Filiais", icon:"🏢", accent:"#06b6d4" },
@@ -6353,7 +6539,7 @@ function Sidebar({ aba, setAba, isAdmin, collapsed, onToggleCollapse, mobileOpen
           {!collapsed ? (
             <div style={{ display:"flex", alignItems:"center", gap:10, minWidth:0 }}>
               <img src={LOGO_AZUL} alt="Servis" style={{ height:28, width:"auto", borderRadius:6, objectFit:"contain", flexShrink:0 }} />
-              <span style={{ fontSize:14, fontWeight:800, color:"var(--tx)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>Servis <span style={{ color:"#3b82f6" }}>VTR</span></span>
+              <span style={{ fontSize:14, fontWeight:800, color:"var(--tx)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>Servis <span style={{ color:"#3b82f6" }}>Monitoramento</span></span>
             </div>
           ):(
             <img src={LOGO_AZUL} alt="Servis" style={{ height:26, width:"auto", borderRadius:6, objectFit:"contain", margin:"0 auto" }} />
@@ -6425,7 +6611,7 @@ function App() {
 
   // -- UX: título dinâmico da página conforme aba ativa --
   useEffect(()=>{
-    document.title=`${TAB_TITLES[aba]||"Dashboard"} — Central de Monitoramento VTR`;
+    document.title=`${TAB_TITLES[aba]||"Dashboard"} — Monitoramento Servis`;
   },[aba]);
 
   // ── MELHORIA 2: estado global do filtro de mês ──
@@ -6863,7 +7049,7 @@ function App() {
             <div>
               <span className="vtr-header-brand" style={{ fontSize:11,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",color:"var(--primary)",display:"block" }}>Central de Monitoramento</span>
               <h1 style={{ fontSize:20,fontWeight:700,margin:0,letterSpacing:"-0.3px",lineHeight:1.25,color:"var(--tx)" }}>{TAB_TITLES[aba]||"Dashboard"}</h1>
-              <p style={{ fontSize:12,color:"rgba(var(--ink),0.3)",margin:0 }}>{TAB_SUBTITLES[aba]||"Gestão e análise de deslocamentos de VTR"}</p>
+              <p style={{ fontSize:12,color:"rgba(var(--ink),0.3)",margin:0 }}>{TAB_SUBTITLES[aba]||"Painel de Monitoramento"}</p>
             </div>
           </div>
         </div>
@@ -6903,6 +7089,7 @@ function App() {
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
+      {aba==="central"&&<CentralTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
