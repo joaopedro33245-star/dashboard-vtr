@@ -97,6 +97,36 @@ function categoriaEvento(o) {
   return null;
 }
 
+// Ocorrência tratada pela central (ignora as que a central nem recebeu): tempos e operadores
+const dataISO = d => d ? String(d).replace(/([+-]\d\d)(\d\d)$/, "$1:$2") : null;
+const ehOperador = n => !!n && !/^sistema$/i.test(n);
+function paraOcorrencia(o, filial, codigo, nome) {
+  const st = (Array.isArray(o.statuses) ? o.statuses : []).slice().sort((a, b) => Date.parse(dataISO(a.date)) - Date.parse(dataISO(b.date)));
+  const pessoa = s => String(s.personName || "").trim();
+  const t0 = Date.parse(dataISO(o.startDate));
+  const seg = d => d ? Math.max(0, Math.round((Date.parse(dataISO(d)) - t0) / 1000)) : null;
+  const assumiu = st.find(s => Number(s.status) === 1 && ehOperador(pessoa(s)));
+  const fech = [...st].reverse().find(s => Number(s.status) === 6);
+  const fechadaEm = o.endDate || (fech && fech.date) || null;
+  const fechadaPor = String(o.closingPersonName || (fech ? pessoa(fech) : "") || "").trim() || null;
+  const d2 = st.find(s => Number(s.status) === 2), d4 = st.find(s => Number(s.status) === 4);
+  const comentarios = {};
+  (o.logs || []).forEach(l => { const n = String(l.personName || "").trim(); if (ehOperador(n) && !l.canceled) comentarios[n] = (comentarios[n] || 0) + 1; });
+  return {
+    id: String(o.id), codigo_cliente: codigo, filial, nome, descricao: String(o.description || "").trim().slice(0, 200),
+    recebida: dataISO(o.startDate),
+    assumida_em: assumiu ? dataISO(assumiu.date) : null, assumida_por: assumiu ? pessoa(assumiu) : null,
+    fechada_em: dataISO(fechadaEm), fechada_por: fechadaPor,
+    t_ate_atender: assumiu ? seg(assumiu.date) : null,
+    t_atendimento: fechadaEm ? seg(fechadaEm) : null,
+    t_espera: st.filter(s => Number(s.status) === 5).reduce((n, s) => n + (Number(s.timeInThisStatus) || 0), 0),
+    teve_desl: !!d2,
+    t_viatura: d2 && d4 ? Math.max(0, Math.round((Date.parse(dataISO(d4.date)) - Date.parse(dataISO(d2.date))) / 1000)) : null,
+    comentarios,
+    automatica: !assumiu,
+  };
+}
+
 async function autorizado(req) {
   const url = (process.env.SUPABASE_URL || "").replace(/\/$/, ""), anon = process.env.SUPABASE_ANON;
   if (!url || !anon) return false;
@@ -140,7 +170,7 @@ export default async function handler(req, res) {
     const json = await r.json();
     const lista = Array.isArray(json) ? json : (json.content || json.data || []);
     let ignorados = 0;
-    const deslocamentos = [], eventos = [], ultimoArme = {};
+    const deslocamentos = [], eventos = [], ultimoArme = {}, ocorrencias = [];
     for (const o of lista) {
       const codigo = String(o.accountCode || "").trim();
       if (!codigo || !o.startDate) continue;
@@ -148,6 +178,10 @@ export default async function handler(req, res) {
       if (!filial) { ignorados++; continue; }
       const d = paraDeslocamento(o, filial);
       if (d && d.data_hora) deslocamentos.push(d);
+      if (!(o.logs || []).some(l => LOG_AUTOMATICO.test(l.text || ""))) {
+        const pi = /PORTARIA INTELIGENTE/i.test(`${o.tradeName || ""} ${o.clientName || ""}`);
+        ocorrencias.push(paraOcorrencia(o, filial, codigo, (pi ? "PORTARIA INTELIGENTE - " : "") + (limparNome(String(o.tradeName || o.clientName || "").replace(/\(?\s*PORTARIA INTELIGENTE\s*\)?/ig, " ")).replace(/^[\s\-–]+|[\s\-–]+$/g, "").replace(/\s+/g, " ") || codigo)));
+      }
       const cat = categoriaEvento(o);
       if (!cat) continue;
       // mantém a marca de Portaria Inteligente no nome (é ela que separa "nossos condomínios" no dashboard)
@@ -162,7 +196,7 @@ export default async function handler(req, res) {
         eventos.push({ id: String(o.id), codigo_cliente: codigo, filial, nome, categoria: cat, dia: diaISO(o.startDate), ts: o.startDate, descricao: String(o.description || "").trim().slice(0, 200) });
       }
     }
-    return res.status(200).json({ total: lista.length, ignorados, deslocamentos, eventos, armes: Object.values(ultimoArme) });
+    return res.status(200).json({ total: lista.length, ignorados, deslocamentos, eventos, armes: Object.values(ultimoArme), ocorrencias });
   } catch (e) {
     return res.status(500).json({ error: "Falha ao consultar a Segware: " + e.message });
   }
