@@ -277,106 +277,104 @@ function parseObservacaoJSON(raw) {
 // Status: 2=DISPLACEMENT, 3=DISPLACEMENT_STARTED,
 //         4=IN_PLACE, 7=IN_PLACE_DONE
 // ═══════════════════════════════════════════════════════════════
-const SEGWARE_API    = "/api/segware";
-const SEGWARE_STATUS = [4];
-const SEG_CACHE_KEY  = "vtr_segware_ultima_sync";
+const SEGWARE_SYNC_API = "/api/segware-sync";
+const SEG_JANELA_H = 3;   // horas por consulta (cada janela tem ~10 mil ocorrências na Segware)
+const SEG_RELER_H  = 3;   // relê as últimas horas: ocorrência aberta pode ganhar viatura depois
+const SEG_PARALELO = 3;
+const SEG_AUTO_MIN = 30;  // sincroniza sozinho se a última tiver mais de 30 min
+const SEG_MARCO    = new Date("2026-11-01T03:00:00Z"); // antes disso os deslocamentos vieram da planilha
+let _segRodando = false;
 
-function getSegwareToken() { return (window._SEGWARE_TOKEN || "").trim(); }
-
-function fmtSegDate(d) {
-  const p = n => String(n).padStart(2,"0");
-  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds());
+async function lerSyncSegware(supabase) {
+  const { data, error } = await supabase.from("segware_sync").select("ate,atualizado_em,por,ultimo_resultado").eq("id",1).maybeSingle();
+  if (error) { console.warn("[Segware] segware_sync:", error.message); return null; }
+  return data;
 }
 
-function labelStatus(code) {
-  const m = {2:"Deslocamento",3:"Desl. Iniciado",4:"No Local",7:"Concluído VTR",8:"URA"};
-  return m[code] || ("Status "+code);
-}
-
-async function fetchSegwareWindow(dataInicio, dataFim) {
-  const url = SEGWARE_API+"?startDate="+encodeURIComponent(dataInicio.toISOString())+"&endDate="+encodeURIComponent(dataFim.toISOString());
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), 15000);
-  try {
-    const resp = await fetch(url, { method:"GET", signal:controller.signal });
-    clearTimeout(timer);
-    if (!resp.ok) { const txt = await resp.text().catch(()=>""); throw new Error("Segware API erro "+resp.status+": "+txt.slice(0,200)); }
-    const json = await resp.json();
-    const lista = Array.isArray(json) ? json : (json.data || json.events || json.results || json.content || []);
-    if(lista.length>0) console.log("[Segware] estrutura do 1o evento:", JSON.stringify(lista[0], null, 2));
-    else console.log("[Segware] resposta completa:", JSON.stringify(json, null, 2));
-    return lista;
-  } catch(e) {
-    clearTimeout(timer);
-    if (e.name === "AbortError") throw new Error("Timeout — Segware demorou mais de 15s para responder");
-    throw e;
+async function segBuscarJanela(token, ini, fim) {
+  const url = SEGWARE_SYNC_API+"?startDate="+encodeURIComponent(ini.toISOString())+"&endDate="+encodeURIComponent(fim.toISOString());
+  let ultimoErro;
+  for (let t=0; t<2; t++) {
+    const ctl = new AbortController(); const timer = setTimeout(()=>ctl.abort(), 70000);
+    try {
+      const r = await fetch(url, { headers:{ Authorization:"Bearer "+token }, signal:ctl.signal });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+      return j;
+    } catch(e) { ultimoErro = e.name==="AbortError" ? new Error("tempo esgotado na Segware") : e; }
+    finally { clearTimeout(timer); }
   }
+  throw ultimoErro;
 }
 
-function segwareToDispatch(ev, filialPadrao) {
-  const statuses = Array.isArray(ev.statuses) ? ev.statuses : [];
-  const ult = statuses.length > 0 ? statuses[statuses.length-1] : null;
-  const cod = ult ? (ult.status ?? ult.code ?? ult.id) : (ev.status ?? ev.lastStatus ?? 0);
-  const rawDate = ev.openedAt || ev.createdAt || ev.date || ev.dataHora || ev.datetime || "";
-  const dataHora = rawDate ? new Date(rawDate).toLocaleString("pt-BR") : "";
-  const codCliente = String(ev.clientCode || ev.clientId || ev.codigoCliente || (ev.client && ev.client.code) || "SEM-COD").trim();
-  const nomeCliente = String(ev.clientName || (ev.client && ev.client.name) || ev.nomeCliente || codCliente).trim();
-  const filial = String(ev.monitoringCenter || ev.filial || ev.branch || filialPadrao || "SEGWARE").trim();
-  const evento = "[Segware] "+labelStatus(Number(cod))+" — Ocorrência #"+(ev.id || ev.occurrenceId || "?");
-  const viatura = String(ev.vehiclePlate || (ev.vehicle && ev.vehicle.plate) || ev.viatura || "").trim();
-  return { codigo_cliente:codCliente, nome_cliente:nomeCliente, filial, data_hora:dataHora, evento, viatura, portaria_inteligente:false, _segware_id:String(ev.id||ev.occurrenceId||"") };
+async function segGravar(supabase, lista) {
+  if (!lista.length) return 0;
+  const vistos = new Set(), rows = [];
+  for (const d of lista) {
+    if (!d.segware_id || vistos.has(d.segware_id)) continue;
+    vistos.add(d.segware_id);
+    rows.push({ segware_id:d.segware_id, codigo_cliente:sanitizeStr(d.codigo_cliente,50), filial:sanitizeStr(d.filial,100),
+      nome_cliente:sanitizeStr(limparFantasia(d.fantasia)||d.codigo_cliente,200), data_hora:sanitizeStr(d.data_hora,30),
+      evento:sanitizeStr(d.evento,300), viatura:sanitizeStr(d.viatura,100), qtd_vtr:d.qtd_vtr||1, portaria_inteligente:Boolean(d.portaria_inteligente) });
+  }
+  // cadastra só os clientes que ainda não existem (não mexe nos que já existem)
+  const novosCli = {};
+  for (const d of rows) {
+    if (d.portaria_inteligente) continue;
+    const k = d.codigo_cliente+"||"+d.filial;
+    if (!novosCli[k]) novosCli[k] = { codigo_cliente:d.codigo_cliente, nome_cliente:d.nome_cliente, filial:d.filial, mensalidade:0, status:"ativo" };
+  }
+  const cli = Object.values(novosCli);
+  for (let i=0; i<cli.length; i+=500) {
+    const { error } = await supabase.from("clients").upsert(cli.slice(i,i+500), { onConflict:"codigo_cliente,filial", ignoreDuplicates:true });
+    if (error) console.warn("[Segware] clientes:", error.message);
+  }
+  let inseridos = 0;
+  for (let i=0; i<rows.length; i+=200) {
+    const { data, error } = await supabase.from("dispatches").upsert(rows.slice(i,i+200), { onConflict:"segware_id", ignoreDuplicates:true }).select("id");
+    if (error) throw new Error("Supabase: "+error.message);
+    inseridos += (data||[]).length;
+  }
+  return inseridos;
 }
 
-async function sincronizarSegware(supabase, filialPadrao, diasAtras) {
-  diasAtras = diasAtras || 2;
-  const token = getSegwareToken();
-  if (!token) return { novos:0, erro:"Token não configurado. Adicione window._SEGWARE_TOKEN no config.js" };
+// Busca na Segware tudo desde a última sincronização (registrada no banco, vale pra todos
+// os usuários) e grava os deslocamentos novos. Cada ocorrência entra uma vez só (segware_id).
+async function sincronizarSegware(supabase, opts) {
+  opts = opts || {};
+  if (_segRodando) return { novos:0, erro:"Já existe uma sincronização em andamento" };
+  _segRodando = true;
   try {
-    const agora = new Date();
-    const inicio = new Date(agora.getTime() - diasAtras * 86400000);
+    const { data:{ session } } = await supabase.auth.getSession();
+    if (!session) return { novos:0, erro:"Sessão expirada — entre de novo" };
+    const st = await lerSyncSegware(supabase);
+    if (!st) return { novos:0, erro:"Tabela segware_sync não encontrada — rode o SQL de configuração no Supabase" };
+    const agora = new Date(), ateAnterior = new Date(st.ate);
+    const desde = new Date(Math.max(ateAnterior.getTime() - SEG_RELER_H*3600e3, SEG_MARCO.getTime()));
     const janelas = [];
-    let cur = new Date(inicio);
-    while (cur < agora) {
-      const fim = new Date(Math.min(cur.getTime() + 6*3600000, agora.getTime()));
-      janelas.push({ inicio: new Date(cur), fim });
-      cur = new Date(fim.getTime() + 1000);
+    for (let t=desde.getTime(); t<agora.getTime(); t+=SEG_JANELA_H*3600e3)
+      janelas.push([new Date(t), new Date(Math.min(t+SEG_JANELA_H*3600e3, agora.getTime()))]);
+    let feitas=0, novos=0, analisados=0, deslocamentos=0, falhas=0, ate=ateAnterior, quebrou=false, ultimoErro="";
+    for (let i=0; i<janelas.length; i+=SEG_PARALELO) {
+      const lote = janelas.slice(i, i+SEG_PARALELO);
+      const res = await Promise.allSettled(lote.map(([a,b]) => segBuscarJanela(session.access_token, a, b)));
+      const linhas = [];
+      res.forEach((r,k) => {
+        if (r.status==="fulfilled") {
+          const l = r.value.deslocamentos || [];
+          analisados += r.value.total || 0; deslocamentos += l.length; linhas.push(...l);
+          if (!quebrou && lote[k][1] > ate) ate = lote[k][1];
+        } else { falhas++; quebrou = true; ultimoErro = (r.reason && r.reason.message) || String(r.reason); }
+      });
+      novos += await segGravar(supabase, linhas);
+      feitas += lote.length;
+      await supabase.from("segware_sync").update({ ate:ate.toISOString(), atualizado_em:new Date().toISOString(), por:opts.por||null,
+        ultimo_resultado:{ novos, analisados, deslocamentos, falhas, erro:ultimoErro||null } }).eq("id",1);
+      if (opts.onProgresso) opts.onProgresso({ feitas, total:janelas.length, novos });
     }
-    let todos = [];
-    for (let i=0; i<janelas.length; i++) {
-      const jan = janelas[i];
-      if (window._segSyncSetMsg) window._segSyncSetMsg("Buscando janela "+(i+1)+" de "+janelas.length+"...");
-      try {
-        const lote = await fetchSegwareWindow(jan.inicio, jan.fim);
-        todos = todos.concat(lote);
-      } catch(e) {
-        console.warn("Janela "+i+" falhou:", e.message);
-      }
-    }
-    if (todos.length === 0) return { novos:0, total:0, erro:null };
-    const dispatches = todos.map(ev => segwareToDispatch(ev, filialPadrao));
-    // Buscar só dispatches do mesmo período para deduplicar (muito mais rápido)
-    const dataInicioStr = inicio.toISOString();
-    const { data:ex } = await supabase.from("dispatches")
-      .select("codigo_cliente,filial,data_hora,evento,viatura")
-      .gte("created_at", dataInicioStr)
-      .limit(5000);
-    const existentesSet = new Set();
-    for (const e of (ex||[])) existentesSet.add(e.codigo_cliente+"||"+e.filial+"||"+e.data_hora+"||"+e.evento+"||"+e.viatura);
-    const novos = dispatches.filter(d => !existentesSet.has(d.codigo_cliente+"||"+d.filial+"||"+d.data_hora+"||"+d.evento+"||"+d.viatura));
-    if (novos.length > 0) {
-      const paraInserir = novos.map(function(d){ const r={...d}; delete r._segware_id; return r; });
-      for (let i=0; i<paraInserir.length; i+=200) {
-        const { error } = await supabase.from("dispatches").insert(paraInserir.slice(i,i+200));
-        if (error) return { novos:0, erro:error.message };
-      }
-    }
-    try { localStorage.setItem(SEG_CACHE_KEY, new Date().toISOString()); } catch {}
-    return { novos:novos.length, total:todos.length, erro:null };
-  } catch(e) { return { novos:0, erro:e.message }; }
-}
-
-function getUltimaSyncSegware() {
-  try { const ts=localStorage.getItem(SEG_CACHE_KEY); return ts ? new Date(ts) : null; } catch { return null; }
+    return { novos, analisados, deslocamentos, falhas, ate, erro: falhas ? ultimoErro : null };
+  } catch(e) { return { novos:0, analisados:0, erro:e.message }; }
+  finally { _segRodando = false; }
 }
 // ═══════════════════════════════════════════════════════════════
 
@@ -6134,7 +6132,7 @@ function App() {
   // -- SEGWARE: estados de sincronização automática --
   const [segSyncStatus,setSegSyncStatus]=useState("idle"); // idle | syncing | ok | erro
   const [segSyncMsg,setSegSyncMsg]=useState("");
-  const [segUltimaSync,setSegUltimaSync]=useState(()=>getUltimaSyncSegware());
+  const [segUltimaSync,setSegUltimaSync]=useState(null);const [segAte,setSegAte]=useState(null);
   const [segAutoMin,setSegAutoMin]=useState(15); // intervalo em minutos
   const [segFilial,setSegFilial]=useState("SEGWARE"); // filial padrão para novos registros
   const [segDiasAtras,setSegDiasAtras]=useState(2); // quantos dias atrás buscar
@@ -6170,38 +6168,44 @@ function App() {
 
   const segSyncRef = useRef(null);
 
-  async function executarSyncSegware() {
-    if (!getSegwareToken()) {
-      setSegSyncStatus("erro");
-      setSegSyncMsg("Token Segware não configurado no config.js");
-      return;
-    }
+  async function lerStatusSegware() {
+    const st = await lerSyncSegware(supabaseClient);
+    if (st) { setSegAte(new Date(st.ate)); setSegUltimaSync(new Date(st.atualizado_em)); }
+    return st;
+  }
+  async function executarSyncSegware(auto) {
+    if (segSyncRef.current) return;
+    segSyncRef.current = true;
     setSegSyncStatus("syncing");
-    setSegSyncMsg("Buscando deslocamentos na Segware…");
-    window._segSyncSetMsg = setSegSyncMsg;
-    const result = await sincronizarSegware(supabaseClient, segFilial, 2);
-    if (result.erro) {
-      setSegSyncStatus("erro");
-      setSegSyncMsg("Erro: " + result.erro);
-    } else {
-      setSegSyncStatus("ok");
-      const ts = getUltimaSyncSegware();
-      setSegUltimaSync(ts);
-      setSegSyncMsg(
-        result.novos > 0
-          ? "✅ " + result.novos + " novos deslocamentos importados!"
-          : "✅ Sincronizado — nenhum dado novo (total analisado: " + (result.total||0) + ")"
-      );
-      if (result.novos > 0) {
-        try { window.vtrCacheLimpar&&window.vtrCacheLimpar(); } catch {}
-        await carregarDados(true);
-      }
+    setSegSyncMsg(auto ? "Atualizando deslocamentos da Segware…" : "Buscando deslocamentos na Segware…");
+    const r = await sincronizarSegware(supabaseClient, { por:(usuario&&usuario.nome)||null,
+      onProgresso:p => setSegSyncMsg("Buscando na Segware… "+p.feitas+" de "+p.total+" janelas · "+p.novos+" deslocamentos novos") });
+    segSyncRef.current = false;
+    await lerStatusSegware();
+    const n = (r.analisados||0).toLocaleString("pt-BR");
+    if (r.erro && !r.novos && !r.analisados) { setSegSyncStatus("erro"); setSegSyncMsg("Erro: "+r.erro); }
+    else {
+      setSegSyncStatus(r.falhas ? "erro" : "ok");
+      setSegSyncMsg((r.novos>0 ? "✅ "+r.novos+" deslocamentos novos importados" : "✅ Sincronizado — nenhum deslocamento novo")
+        +" ("+n+" ocorrências analisadas"+(r.falhas ? "; "+r.falhas+" janela(s) falharam e serão buscadas de novo na próxima" : "")+")");
     }
+    if (r.novos > 0) { try { window.vtrCacheLimpar&&window.vtrCacheLimpar(); } catch {} await carregarDados(true); }
     setTimeout(() => setSegSyncStatus(s => s==="ok"?"idle":s), 8000);
   }
 
-  // Sync automático desabilitado no frontend — o Vercel Cron cuida disso de 3 em 3 horas
-  // useEffect removido intencionalmente
+  // Sync automático: ao abrir o dashboard e a cada 30 min com ele aberto — só roda se a
+  // última sincronização (gravada no banco, vale pra todos os usuários) tiver mais de 30 min
+  useEffect(()=>{
+    if (!usuario) return;
+    let vivo = true;
+    const tick = async () => {
+      if (!vivo || document.hidden) return;
+      const st = await lerStatusSegware();
+      if (vivo && st && Date.now()-new Date(st.ate).getTime() > SEG_AUTO_MIN*60e3) executarSyncSegware(true);
+    };
+    const t0 = setTimeout(tick, 4000), iv = setInterval(tick, SEG_AUTO_MIN*60e3);
+    return () => { vivo = false; clearTimeout(t0); clearInterval(iv); };
+  },[usuario&&usuario.id]);
 
   useEffect(()=>{
     supabaseClient.auth.getSession().then(async({data:{session},error})=>{
@@ -6588,7 +6592,7 @@ function App() {
         </div>
         <div className="dash-header-actions" style={{ display:"flex",alignItems:"center",gap:12 }}>
           {lastUpdated&&<div style={{ textAlign:"right" }}><div style={{ fontSize:10,color:"rgba(var(--ink),0.2)",textTransform:"uppercase",letterSpacing:"0.08em" }}>Última importação</div><div style={{ fontSize:12,color:"rgba(var(--ink),0.4)",fontWeight:600 }}>{lastUpdated}</div></div>}
-          {getSegwareToken()&&(
+          {isAdmin&&(
             <div style={{ textAlign:"right",cursor:"pointer" }} onClick={()=>setAba("importacao")} title="Segware — clique para ver integração">
               <div style={{ fontSize:10,color:"rgba(var(--ink),0.2)",textTransform:"uppercase",letterSpacing:"0.08em" }}>Segware</div>
               <div style={{ fontSize:12,fontWeight:600,color: segSyncStatus==="syncing"?"#f59e0b": segSyncStatus==="erro"?"#ef4444":"#10b981" }}>
@@ -6648,58 +6652,27 @@ function App() {
             </div>
           )}
 
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:16 }}>
-            {/* Filial padrão */}
-            <div>
-              <label style={{ display:"block", fontSize:11, color:"rgba(var(--ink),0.5)", marginBottom:4 }}>Filial padrão para novos registros</label>
-              <input
-                value={segFilial}
-                onChange={e=>setSegFilial(e.target.value)}
-                placeholder="Ex: SERVIS CEARÁ"
-                style={{ width:"100%", padding:"8px 12px", borderRadius:9, border:"1px solid rgba(var(--ink),0.12)", background:"rgba(var(--ink),0.05)", color:"var(--tx)", fontSize:13, outline:"none", boxSizing:"border-box" }}
-              />
-            </div>
-            {/* Intervalo automático */}
-            <div>
-              <label style={{ display:"block", fontSize:11, color:"rgba(var(--ink),0.5)", marginBottom:4 }}>Atualizar automaticamente a cada</label>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <input
-                  type="number" min="1" max="1440"
-                  value={segAutoMin}
-                  onChange={e=>setSegAutoMin(Math.max(1,parseInt(e.target.value)||15))}
-                  style={{ width:80, padding:"8px 12px", borderRadius:9, border:"1px solid rgba(var(--ink),0.12)", background:"rgba(var(--ink),0.05)", color:"var(--tx)", fontSize:13, outline:"none" }}
-                />
-                <span style={{ fontSize:13, color:"rgba(var(--ink),0.5)" }}>minutos</span>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginBottom:16 }}>
+            {[["Sincronizado até", segAte ? segAte.toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—"],
+              ["Última execução", segUltimaSync ? segUltimaSync.toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—"],
+              ["Automático", "a cada "+SEG_AUTO_MIN+" min com o dashboard aberto"]].map(([l,v])=>(
+              <div key={l} style={{ padding:"10px 14px", borderRadius:10, background:"rgba(var(--ink),0.04)", border:"1px solid rgba(var(--ink),0.08)" }}>
+                <div style={{ fontSize:10, color:"rgba(var(--ink),0.45)", textTransform:"uppercase", letterSpacing:"0.06em" }}>{l}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"var(--tx)", marginTop:3 }}>{v}</div>
               </div>
-            </div>
+            ))}
           </div>
-
-          {/* Token status */}
-          <div style={{ marginBottom:16, padding:"8px 14px", borderRadius:10, background: getSegwareToken() ? "rgba(16,185,129,0.06)" : "rgba(239,68,68,0.08)", border:"1px solid " + (getSegwareToken() ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.25)"), fontSize:12, color: getSegwareToken() ? "#10b981" : "#ef4444" }}>
-            {getSegwareToken()
-              ? "Token Segware configurado no config.js ✓"
-              : "Token nao encontrado - adicione window._SEGWARE_TOKEN no config.js"}
-          </div>
-
-          {/* Última sincronização */}
-          {segUltimaSync && (
-            <div style={{ marginBottom:16, fontSize:11, color:"rgba(var(--ink),0.35)" }}>
-              Última sincronização: {segUltimaSync.toLocaleString("pt-BR")}
-            </div>
-          )}
-
-          {/* Botões */}
           <div style={{ display:"flex", gap:10 }}>
             <button
-              onClick={executarSyncSegware}
-              disabled={segSyncStatus==="syncing" || !getSegwareToken()}
-              style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1px solid rgba(59,130,246,0.4)", background: segSyncStatus==="syncing"||!getSegwareToken() ? "rgba(59,130,246,0.05)" : "rgba(59,130,246,0.12)", color: segSyncStatus==="syncing"||!getSegwareToken() ? "rgba(59,130,246,0.4)" : "#3b82f6", fontSize:13, fontWeight:600, cursor: segSyncStatus==="syncing"||!getSegwareToken() ? "not-allowed" : "pointer" }}
+              onClick={()=>executarSyncSegware(false)}
+              disabled={segSyncStatus==="syncing"}
+              style={{ flex:1, padding:"10px 0", borderRadius:10, border:"1px solid rgba(59,130,246,0.4)", background: segSyncStatus==="syncing" ? "rgba(59,130,246,0.05)" : "rgba(59,130,246,0.12)", color: segSyncStatus==="syncing" ? "rgba(59,130,246,0.4)" : "#3b82f6", fontSize:13, fontWeight:600, cursor: segSyncStatus==="syncing" ? "not-allowed" : "pointer" }}
             >
-              {segSyncStatus==="syncing" ? "Sincronizando..." : "Sincronizar Agora"}
+              {segSyncStatus==="syncing" ? "Sincronizando..." : "Sincronizar agora"}
             </button>
           </div>
-          <div style={{ marginTop:10, fontSize:10, color:"rgba(var(--ink),0.2)", lineHeight:1.5 }}>
-            Busca os últimos 30 dias na API Segware · Filtra status DISPLACEMENT (2), DISPLACEMENT_STARTED (3), IN_PLACE (4), IN_PLACE_DONE (7) · Evita duplicatas automaticamente
+          <div style={{ marginTop:10, fontSize:11, color:"rgba(var(--ink),0.4)", lineHeight:1.6 }}>
+            Puxa da Segware as ocorrências em que uma viatura foi acionada (deslocamento, a caminho, no local) e grava em Deslocamentos já com a filial certa (CE, PI, MA, AM). Cada ocorrência entra uma vez só, então pode clicar quantas vezes quiser. A partir de novembro/2026 não precisa mais importar a planilha de deslocamentos.
           </div>
         </div>
       )}
