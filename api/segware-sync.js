@@ -5,17 +5,27 @@
 //  - armes: último armado/desarmado de cada cliente na janela ("clientes sem armar")
 // Acesso: sessão do Supabase (usuário logado) ou a chave do agendamento do próprio Supabase.
 
+// Empresa cadastrada na Segware (companyId) → filial no dashboard. A empresa manda (ex.: contas da
+// Secopi em Timon/MA continuam Secopi Piauí); o estado só é usado para empresa desconhecida.
+const FILIAL_POR_EMPRESA = {
+  3244: "SERVIS CEARÁ",
+  3247: "SECOPI PIAUÍ",
+  3249: "SERVIS MARANHÃO",
+  3251: "SERVIS AMAZONAS",
+  6699: "Maver Monitoramento",
+  3246: "1 P3 SOLUCOES",
+  7127: "2 PROGUARD",
+  10635: "4 PRIORIDADE SERVICOS TERCEIRIZADOS LTDA",
+  8021: "OVERTEC",
+  11339: "EMPRESA SEGWARE 11339",
+  12403: "HISEG BAHIA",
+};
+const EMPRESA_IGNORADA = new Set([3437]); // "Conta Transmitter" (conta técnica)
 const FILIAL_POR_ESTADO = {
   "CEARA": "SERVIS CEARÁ",
   "PIAUI": "SECOPI PIAUÍ",
   "MARANHAO": "SERVIS MARANHÃO",
   "AMAZONAS": "SERVIS AMAZONAS",
-};
-const FILIAL_POR_EMPRESA = {
-  3244: "SERVIS CEARÁ", 3246: "SERVIS CEARÁ", 8021: "SERVIS CEARÁ", 10635: "SERVIS CEARÁ", 11339: "SERVIS CEARÁ",
-  3247: "SECOPI PIAUÍ",
-  3249: "SERVIS MARANHÃO", 6699: "SERVIS MARANHÃO",
-  3251: "SERVIS AMAZONAS",
 };
 const STATUS_DESLOCAMENTO = new Set([2, 3, 4, 7]);
 const LOG_AUTOMATICO = /CUC n[aã]o permite|Monitoramento desabilitado/i;
@@ -43,7 +53,7 @@ function diaISO(iso) {
 function limparNome(s) {
   return String(s || "").trim().replace(/\s*\(.*?\)\s*$/, "").replace(/^\(.*?\)\s*/, "").trim();
 }
-const filialDe = o => FILIAL_POR_ESTADO[semAcento(o.stateName)] || FILIAL_POR_EMPRESA[o.companyId] || null;
+const filialDe = o => EMPRESA_IGNORADA.has(Number(o.companyId)) ? null : (FILIAL_POR_EMPRESA[o.companyId] || FILIAL_POR_ESTADO[semAcento(o.stateName)] || null);
 
 function paraDeslocamento(o, filial) {
   const st = Array.isArray(o.statuses) ? o.statuses : [];
