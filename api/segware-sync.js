@@ -159,7 +159,7 @@ export default async function handler(req, res) {
         if (!ultimoArme[k] || o.startDate > ultimoArme[k].ts)
           ultimoArme[k] = { codigo_cliente: codigo, filial, nome, ts: o.startDate, evento: String(o.description || "").trim().slice(0, 120) };
       } else {
-        eventos.push({ id: String(o.id), codigo_cliente: codigo, filial, nome, categoria: cat, dia: diaISO(o.startDate), ts: o.startDate });
+        eventos.push({ id: String(o.id), codigo_cliente: codigo, filial, nome, categoria: cat, dia: diaISO(o.startDate), ts: o.startDate, descricao: String(o.description || "").trim().slice(0, 200) });
       }
     }
     return res.status(200).json({ total: lista.length, ignorados, deslocamentos, eventos, armes: Object.values(ultimoArme) });
