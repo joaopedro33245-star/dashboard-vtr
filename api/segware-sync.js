@@ -149,7 +149,10 @@ export default async function handler(req, res) {
       if (d && d.data_hora) deslocamentos.push(d);
       const cat = categoriaEvento(o);
       if (!cat) continue;
-      const nome = limparNome(o.tradeName || o.clientName) || codigo;
+      // mantém a marca de Portaria Inteligente no nome (é ela que separa "nossos condomínios" no dashboard)
+      const pi = /PORTARIA INTELIGENTE/i.test(`${o.tradeName || ""} ${o.clientName || ""}`);
+      const base = limparNome(String(o.tradeName || o.clientName || "").replace(/\(?\s*PORTARIA INTELIGENTE\s*\)?/ig, " ")).replace(/^[\s\-–]+|[\s\-–]+$/g, "").replace(/\s+/g, " ");
+      const nome = (pi ? "PORTARIA INTELIGENTE - " : "") + (base || codigo);
       if (cat === "arme") {
         const k = codigo + "|" + filial;
         if (!ultimoArme[k] || o.startDate > ultimoArme[k].ts)
