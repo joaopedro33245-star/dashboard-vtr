@@ -6638,7 +6638,7 @@ function App() {
             <span style={{ fontSize:20 }}>🔗</span>
             <div>
               <div style={{ fontSize:15, fontWeight:700, color:"#3b82f6" }}>Integração Segware</div>
-              <div style={{ fontSize:11, color:"rgba(var(--ink),0.4)" }}>Sincroniza deslocamentos (status 2,3,4,7) automaticamente</div>
+              <div style={{ fontSize:11, color:"rgba(var(--ink),0.4)" }}>Sincroniza automaticamente os deslocamentos que chegaram no local</div>
             </div>
             {segSyncStatus==="syncing" && <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:6, fontSize:11, color:"#f59e0b" }}><div style={{ width:10,height:10,borderRadius:"50%",background:"#f59e0b",animation:"pulse 1s infinite" }}/> Sincronizando…</div>}
             {segSyncStatus==="ok" && <div style={{ marginLeft:"auto", fontSize:11, color:"#10b981" }}>✅ OK</div>}
@@ -6672,7 +6672,7 @@ function App() {
             </button>
           </div>
           <div style={{ marginTop:10, fontSize:11, color:"rgba(var(--ink),0.4)", lineHeight:1.6 }}>
-            Puxa da Segware as ocorrências em que uma viatura foi acionada (deslocamento, a caminho, no local) e grava em Deslocamentos já com a filial certa (CE, PI, MA, AM). Cada ocorrência entra uma vez só, então pode clicar quantas vezes quiser. A partir de novembro/2026 não precisa mais importar a planilha de deslocamentos.
+            Puxa da Segware as ocorrências em que a viatura chegou no local (mesmo critério do relatório "Deslocamento de viaturas") e grava em Deslocamentos já com a filial certa (CE, PI, MA, AM). Cada ocorrência entra uma vez só, então pode clicar quantas vezes quiser. A partir de novembro/2026 não precisa mais importar a planilha de deslocamentos.
           </div>
         </div>
       )}
