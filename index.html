@@ -5681,7 +5681,21 @@ function VariacaoTag({ atual, anterior, grande }) {
   );
 }
 
+// ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
+const GRUPOS_CLIENTE = [
+  { key:"hiseg",  label:"Condomínios Hiseg",  icone:"🏢", cor:"#a855f7" },
+  { key:"cond",   label:"Nossos condomínios", icone:"🏘️", cor:"#06b6d4" },
+  { key:"outros", label:"Demais clientes",    icone:"🏪", cor:"#64748b" },
+];
+function grupoDoCliente(nome) {
+  const n = normEvento(nome);
+  if (/HISEG/.test(n)) return "hiseg";
+  if (/CONDOMINIO|\bCOND\b|EDIFICIO|\bEDF\b|\bED\.|RESIDENCIAL|PORTARIA INTELIGENTE/.test(n)) return "cond";
+  return "outros";
+}
+
 function AnaliseEventosTab({ clients, eventosSaude }) {
+  const [grupo, setGrupo] = useState("todos");
   const [filial, setFilial] = useState("Todas");
   const [cat, setCat] = useState("disparos");
   const [semanaSel, setSemanaSel] = useState("");
@@ -5690,17 +5704,23 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
   const filiais = useMemo(() => ["Todas", ...Array.from(new Set(eventosSaude.map(e => e.filial).filter(Boolean))).sort()], [eventosSaude]);
   const nomeMap = useMemo(() => { const m = {}; for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.nome_cliente || c.codigo_cliente; return m; }, [clients]);
 
-  // classifica uma vez: { semana, cat, chave }
-  const base = useMemo(() => {
+  // classifica uma vez: { semana, cat, chave, g (tipo de cliente) }
+  const baseAll = useMemo(() => {
     const out = [];
     for (const e of eventosSaude) {
       if (filial !== "Todas" && e.filial !== filial) continue;
       const c = categoriaDoEvento(e.evento); if (!c) continue;
       const dt = parseDataHora(e.data_hora); if (!dt) continue;
-      out.push({ semana:getWeekKey(dt), cat:c, chave:`${e.codigo_cliente}||${e.filial}`, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt, q:e.qtd || 1 });
+      const chave = `${e.codigo_cliente}||${e.filial}`;
+      out.push({ semana:getWeekKey(dt), cat:c, chave, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt, q:e.qtd || 1, g:grupoDoCliente(e.nome_cliente || nomeMap[chave]) });
     }
     return out;
-  }, [eventosSaude, filial]);
+  }, [eventosSaude, filial, nomeMap]);
+  const base = useMemo(() => grupo === "todos" ? baseAll : baseAll.filter(r => r.g === grupo), [baseAll, grupo]);
+  // totais semana × categoria × tipo de cliente (tabela de comparação)
+  const totGrupos = useMemo(() => { const t = {}; for (const r of baseAll) { const k = r.semana + "|" + r.cat + "|" + r.g; t[k] = (t[k] || 0) + r.q; } return t; }, [baseAll]);
+  const tg = (s, c, g) => g === "todos" ? GRUPOS_CLIENTE.reduce((n, x) => n + (totGrupos[s + "|" + c + "|" + x.key] || 0), 0) : (totGrupos[s + "|" + c + "|" + g] || 0);
+
 
   const semanas = useMemo(() => Array.from(new Set(base.map(r => r.semana))).sort().reverse(), [base]);
   const ultimaData = useMemo(() => base.reduce((m, r) => r.dt > m ? r.dt : m, new Date(0)), [base]);
@@ -5765,8 +5785,30 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
         <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
           <select value={semana} onChange={e => setSemanaSel(e.target.value)} style={selStyle}>{semanas.map(s => <option key={s} value={s}>Semana {weekLabel(s)}</option>)}</select>
           <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+          <select value={grupo} onChange={e => setGrupo(e.target.value)} style={selStyle}><option value="todos">Todos os clientes</option>{GRUPOS_CLIENTE.map(g => <option key={g.key} value={g.key}>{g.label}</option>)}</select>
         </div>
       </div>
+
+      {/* semana contra semana separando Hiseg × nossos condomínios × demais */}
+      <Card style={{ marginBottom:18 }}>
+        <div style={{ padding:"16px 20px 2px", fontWeight:700, fontSize:15 }}>📅 Semana contra semana por tipo de cliente</div>
+        <div style={{ padding:"0 20px 8px", fontSize:12, color:"rgba(var(--ink),0.5)" }}>{semana ? weekLabel(semana) : "—"} comparada com {semanaAnt ? weekLabel(semanaAnt) : "—"} · clique numa linha para filtrar o resto da tela</div>
+        <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead><tr><th style={th}>Tipo de cliente</th>{CATEGORIAS_EVENTO.map(c => <th key={c.key} style={{ ...th, textAlign:"right" }}>{c.icone} {c.label}</th>)}</tr></thead>
+          <tbody>{[...GRUPOS_CLIENTE, { key:"todos", label:"Todos", icone:"👥", cor:"var(--tx)" }].map(gr => {
+            const sel = grupo === gr.key;
+            return (
+              <tr key={gr.key} onClick={() => setGrupo(gr.key)} style={{ cursor:"pointer", background: sel ? "rgba(var(--ink),0.05)" : "transparent", fontWeight: gr.key === "todos" ? 700 : 400 }}>
+                <td style={{ ...td, fontWeight:700, borderLeft:"3px solid " + (sel ? gr.cor : "transparent") }}>{gr.icone} {gr.label}</td>
+                {CATEGORIAS_EVENTO.map(c => {
+                  const a = tg(semana, c.key, gr.key), p = tg(semanaAnt, c.key, gr.key);
+                  return <td key={c.key} style={{ ...td, textAlign:"right" }}><div style={{ fontWeight:800 }}>{a.toLocaleString("pt-BR")}</div><div style={{ fontSize:11.5 }}><VariacaoTag atual={a} anterior={p} /> <span style={{ color:"rgba(var(--ink),0.45)" }}>antes {p.toLocaleString("pt-BR")}</span></div></td>;
+                })}
+              </tr>
+            );
+          })}</tbody>
+        </table></div>
+      </Card>
 
       {/* uma caixa por tipo de evento: total da semana e variação */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:14, marginBottom:18 }}>
@@ -5837,13 +5879,15 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
           </Card>
         </div>
       </div>
-      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Relatório de eventos importado (Importação → Saúde do Cliente). Semanas de segunda a domingo.</div>
+      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = nomes com condomínio, edifício, residencial ou portaria inteligente.</div>
     </div>
   );
 }
 
-function SaudeClienteTab({ clients, eventosSaude }) {
+function SaudeClienteTab({ clients, eventosSaude: eventosTodos }) {
   const [mesFiltro, setMesFiltro] = useState("Todos");
+  const [grupoSaude, setGrupoSaude] = useState("todos");
+  const eventosSaude = useMemo(() => grupoSaude === "todos" ? eventosTodos : eventosTodos.filter(e => grupoDoCliente(e.nome_cliente) === grupoSaude), [eventosTodos, grupoSaude]);
 
   const mesesTodos = useMemo(() => {
     const s = new Set();
@@ -5927,6 +5971,11 @@ function SaudeClienteTab({ clients, eventosSaude }) {
   return (
     <div>
       <MesFiltroBar value={mesFiltro} onChange={setMesFiltro} meses={mesesTodos} accent="#ef4444" label="Período (disparos, energia, bateria e comunicação)" />
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", margin:"0 0 16px" }}>
+        {[{ key:"todos", label:"Todos os clientes", icone:"👥", cor:"#ef4444" }, ...GRUPOS_CLIENTE].map(g => (
+          <button key={g.key} onClick={() => setGrupoSaude(g.key)} style={{ padding:"6px 13px", borderRadius:999, border:"1px solid " + (grupoSaude === g.key ? g.cor : "var(--border)"), background: grupoSaude === g.key ? "rgba(var(--ink),0.06)" : "var(--card)", color:"var(--tx)", fontSize:12.5, fontWeight:600, cursor:"pointer" }}>{g.icone} {g.label}</button>
+        ))}
+      </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:20 }}>
         <KPICard label="Disparos" value={totCat("disparos").toLocaleString("pt-BR")} sub={cliCat("disparos")} icon="🚨" accent="#ef4444" />
