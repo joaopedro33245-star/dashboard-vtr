@@ -307,35 +307,12 @@ async function segBuscarJanela(token, ini, fim) {
   throw ultimoErro;
 }
 
-async function segGravar(supabase, lista) {
-  if (!lista.length) return 0;
-  const vistos = new Set(), rows = [];
-  for (const d of lista) {
-    if (!d.segware_id || vistos.has(d.segware_id)) continue;
-    vistos.add(d.segware_id);
-    rows.push({ segware_id:d.segware_id, codigo_cliente:sanitizeStr(d.codigo_cliente,50), filial:sanitizeStr(d.filial,100),
-      nome_cliente:sanitizeStr(limparFantasia(d.fantasia)||d.codigo_cliente,200), data_hora:sanitizeStr(d.data_hora,30),
-      evento:sanitizeStr(d.evento,300), viatura:sanitizeStr(d.viatura,100), qtd_vtr:d.qtd_vtr||1, portaria_inteligente:Boolean(d.portaria_inteligente) });
-  }
-  // cadastra só os clientes que ainda não existem (não mexe nos que já existem)
-  const novosCli = {};
-  for (const d of rows) {
-    if (d.portaria_inteligente) continue;
-    const k = d.codigo_cliente+"||"+d.filial;
-    if (!novosCli[k]) novosCli[k] = { codigo_cliente:d.codigo_cliente, nome_cliente:d.nome_cliente, filial:d.filial, mensalidade:0, status:"ativo" };
-  }
-  const cli = Object.values(novosCli);
-  for (let i=0; i<cli.length; i+=500) {
-    const { error } = await supabase.from("clients").upsert(cli.slice(i,i+500), { onConflict:"codigo_cliente,filial", ignoreDuplicates:true });
-    if (error) console.warn("[Segware] clientes:", error.message);
-  }
-  let inseridos = 0;
-  for (let i=0; i<rows.length; i+=200) {
-    const { data, error } = await supabase.from("dispatches").upsert(rows.slice(i,i+200), { onConflict:"segware_id", ignoreDuplicates:true }).select("id");
-    if (error) throw new Error("Supabase: "+error.message);
-    inseridos += (data||[]).length;
-  }
-  return inseridos;
+// Grava no banco tudo o que a Segware devolveu numa janela: deslocamentos, eventos de saúde
+// (resumidos por cliente/semana) e último armado/desarmado. Mesma função usada pelo agendamento.
+async function segGravar(supabase, resp, ate, por) {
+  const { data, error } = await supabase.rpc("segware_gravar", { p: resp, p_ate: ate ? ate.toISOString() : null, p_por: por || null });
+  if (error) throw new Error("Supabase: " + error.message);
+  return data || {};
 }
 
 // Busca na Segware tudo desde a última sincronização (registrada no banco, vale pra todos
@@ -354,25 +331,23 @@ async function sincronizarSegware(supabase, opts) {
     const janelas = [];
     for (let t=desde.getTime(); t<agora.getTime(); t+=SEG_JANELA_H*3600e3)
       janelas.push([new Date(t), new Date(Math.min(t+SEG_JANELA_H*3600e3, agora.getTime()))]);
-    let feitas=0, novos=0, analisados=0, deslocamentos=0, falhas=0, ate=ateAnterior, quebrou=false, ultimoErro="";
+    let feitas=0, novos=0, eventosN=0, analisados=0, deslocamentos=0, falhas=0, ate=ateAnterior, quebrou=false, ultimoErro="";
     for (let i=0; i<janelas.length; i+=SEG_PARALELO) {
       const lote = janelas.slice(i, i+SEG_PARALELO);
       const res = await Promise.allSettled(lote.map(([a,b]) => segBuscarJanela(session.access_token, a, b)));
-      const linhas = [];
-      res.forEach((r,k) => {
+      for (let k=0; k<res.length; k++) {
+        const r = res[k];
         if (r.status==="fulfilled") {
-          const l = r.value.deslocamentos || [];
-          analisados += r.value.total || 0; deslocamentos += l.length; linhas.push(...l);
+          analisados += r.value.total || 0; deslocamentos += (r.value.deslocamentos || []).length;
           if (!quebrou && lote[k][1] > ate) ate = lote[k][1];
+          const g = await segGravar(supabase, r.value, quebrou ? null : ate, opts.por);
+          novos += g.deslocamentos || 0; eventosN += g.eventos || 0;
         } else { falhas++; quebrou = true; ultimoErro = (r.reason && r.reason.message) || String(r.reason); }
-      });
-      novos += await segGravar(supabase, linhas);
+      }
       feitas += lote.length;
-      await supabase.from("segware_sync").update({ ate:ate.toISOString(), atualizado_em:new Date().toISOString(), por:opts.por||null,
-        ultimo_resultado:{ novos, analisados, deslocamentos, falhas, erro:ultimoErro||null } }).eq("id",1);
       if (opts.onProgresso) opts.onProgresso({ feitas, total:janelas.length, novos });
     }
-    return { novos, analisados, deslocamentos, falhas, ate, erro: falhas ? ultimoErro : null };
+    return { novos, eventos:eventosN, analisados, deslocamentos, falhas, ate, erro: falhas ? ultimoErro : null };
   } catch(e) { return { novos:0, analisados:0, erro:e.message }; }
   finally { _segRodando = false; }
 }
@@ -483,7 +458,7 @@ function rankearPorPalavraChave(disps, regex, nomeMap, limite=15) {
     if (!regex.test(d.evento || "")) continue;
     const key = `${d.codigo_cliente}||${d.filial}`;
     if (!map[key]) map[key] = { chave:key, nome:nomeMap[key]||d.nome_cliente||d.codigo_cliente, codigo:d.codigo_cliente, filial:d.filial, total:0 };
-    map[key].total++;
+    map[key].total += (d.qtd || 1);
   }
   return Object.values(map).sort((a,b)=>b.total-a.total).slice(0,limite);
 }
@@ -5722,7 +5697,7 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
       if (filial !== "Todas" && e.filial !== filial) continue;
       const c = categoriaDoEvento(e.evento); if (!c) continue;
       const dt = parseDataHora(e.data_hora); if (!dt) continue;
-      out.push({ semana:getWeekKey(dt), cat:c, chave:`${e.codigo_cliente}||${e.filial}`, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt });
+      out.push({ semana:getWeekKey(dt), cat:c, chave:`${e.codigo_cliente}||${e.filial}`, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt, q:e.qtd || 1 });
     }
     return out;
   }, [eventosSaude, filial]);
@@ -5737,7 +5712,7 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
   const parcial = semana && ultimaData < fimDe(semana);
 
   // contagens por semana e categoria
-  const totais = useMemo(() => { const t = {}; for (const r of base) { const k = r.semana + "|" + r.cat; t[k] = (t[k] || 0) + 1; } return t; }, [base]);
+  const totais = useMemo(() => { const t = {}; for (const r of base) { const k = r.semana + "|" + r.cat; t[k] = (t[k] || 0) + r.q; } return t; }, [base]);
   const tot = (s, c) => totais[s + "|" + c] || 0;
   const clientesAfetados = (s, c) => new Set(base.filter(r => r.semana === s && r.cat === c).map(r => r.chave)).size;
 
@@ -5747,7 +5722,7 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
     for (const r of base) {
       if (r.cat !== cat || (r.semana !== semana && r.semana !== semanaAnt)) continue;
       const x = m[r.chave] = m[r.chave] || { chave:r.chave, codigo:r.codigo, filial:r.filial, nome:nomeMap[r.chave] || r.nome || r.codigo, atual:0, anterior:0 };
-      if (r.semana === semana) x.atual++; else x.anterior++;
+      if (r.semana === semana) x.atual += r.q; else x.anterior += r.q;
     }
     const lista = Object.values(m);
     const posAnt = {}; lista.slice().sort((a, b) => b.anterior - a.anterior).filter(x => x.anterior > 0).forEach((x, i) => posAnt[x.chave] = i + 1);
@@ -6186,10 +6161,10 @@ function App() {
     if (r.erro && !r.novos && !r.analisados) { setSegSyncStatus("erro"); setSegSyncMsg("Erro: "+r.erro); }
     else {
       setSegSyncStatus(r.falhas ? "erro" : "ok");
-      setSegSyncMsg((r.novos>0 ? "✅ "+r.novos+" deslocamentos novos importados" : "✅ Sincronizado — nenhum deslocamento novo")
+      setSegSyncMsg((r.novos>0 ? "✅ "+r.novos+" deslocamentos novos importados" : "✅ Sincronizado — nenhum deslocamento novo")+(r.eventos ? " · Saúde do Cliente atualizada" : "")
         +" ("+n+" ocorrências analisadas"+(r.falhas ? "; "+r.falhas+" janela(s) falharam e serão buscadas de novo na próxima" : "")+")");
     }
-    if (r.novos > 0) { try { window.vtrCacheLimpar&&window.vtrCacheLimpar(); } catch {} await carregarDados(true); }
+    if (r.novos > 0 || r.eventos > 0) { try { window.vtrCacheLimpar&&window.vtrCacheLimpar(); } catch {} await carregarDados(true); }
     setTimeout(() => setSegSyncStatus(s => s==="ok"?"idle":s), 8000);
   }
 
@@ -6655,7 +6630,7 @@ function App() {
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12, marginBottom:16 }}>
             {[["Sincronizado até", segAte ? segAte.toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—"],
               ["Última execução", segUltimaSync ? segUltimaSync.toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"}) : "—"],
-              ["Automático", "a cada "+SEG_AUTO_MIN+" min com o dashboard aberto"]].map(([l,v])=>(
+              ["Automático", "pelo servidor, a cada poucos minutos (mesmo com o dashboard fechado)"]].map(([l,v])=>(
               <div key={l} style={{ padding:"10px 14px", borderRadius:10, background:"rgba(var(--ink),0.04)", border:"1px solid rgba(var(--ink),0.08)" }}>
                 <div style={{ fontSize:10, color:"rgba(var(--ink),0.45)", textTransform:"uppercase", letterSpacing:"0.06em" }}>{l}</div>
                 <div style={{ fontSize:13, fontWeight:600, color:"var(--tx)", marginTop:3 }}>{v}</div>
@@ -6672,7 +6647,7 @@ function App() {
             </button>
           </div>
           <div style={{ marginTop:10, fontSize:11, color:"rgba(var(--ink),0.4)", lineHeight:1.6 }}>
-            Puxa da Segware as ocorrências em que a viatura chegou no local (mesmo critério do relatório "Deslocamento de viaturas") e grava em Deslocamentos já com a filial certa (CE, PI, MA, AM). Cada ocorrência entra uma vez só, então pode clicar quantas vezes quiser. A partir de novembro/2026 não precisa mais importar a planilha de deslocamentos.
+            Puxa da Segware as ocorrências em que a viatura chegou no local (mesmo critério do relatório "Deslocamento de viaturas") e grava em Deslocamentos já com a filial certa (CE, PI, MA, AM). Cada ocorrência entra uma vez só, então pode clicar quantas vezes quiser. Também alimenta a Saúde do Cliente e a Análise de Eventos (bateria, comunicação, queda de energia, disparos e último armado). A partir de novembro/2026 não precisa mais importar planilhas.
           </div>
         </div>
       )}
