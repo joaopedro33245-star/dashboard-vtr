@@ -6122,6 +6122,213 @@ function GuardiaTab({ supabaseClient }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Logs dos operadores — o que cada operador escreveu nas ocorrências e quanto veio do "Operador Bot"
+// ═══════════════════════════════════════════════════════════════
+const ehBotTexto = t => /operador bot|\(bot\)/i.test(String(t || ""));
+function exportarLogsXlsx(rows, nomeArq) {
+  const dados = rows.map(r => ({
+    "Data/hora": new Date(r.ts).toLocaleString("pt-BR"), "Operador": r.pessoa, "Operador Bot": r.bot ? "SIM" : "não", "Comentário": r.texto,
+    "Filial": r.filial, "Conta": r.codigo_cliente, "Cliente": r.nome_cliente, "Evento": r.descricao,
+    "Ocorrência recebida": r.recebida ? new Date(r.recebida).toLocaleString("pt-BR") : "", "Fechada por": r.fechada_por || "", "ID ocorrência": r.segware_id,
+  }));
+  const ws = XLSX.utils.json_to_sheet(dados); ws["!cols"] = [{ wch:18 }, { wch:26 }, { wch:12 }, { wch:90 }, { wch:16 }, { wch:8 }, { wch:34 }, { wch:30 }, { wch:18 }, { wch:24 }, { wch:12 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Logs"); XLSX.writeFile(wb, nomeArq);
+}
+function LinhaTempoOcorrencia({ id, supabaseClient }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { supabaseClient.rpc("segware_logs_ocorrencia", { p_id:id }).then(({ data }) => setRows(data || [])); }, [id, supabaseClient]);
+  if (!rows) return <div style={{ padding:"8px 12px", fontSize:12, color:"rgba(var(--ink),0.5)" }}>Carregando histórico…</div>;
+  return (
+    <div style={{ padding:"8px 12px 12px 24px", borderLeft:"3px solid rgba(14,165,233,0.4)", margin:"4px 0 8px 10px" }}>
+      {rows.map((r, i) => (
+        <div key={i} style={{ fontSize:12.5, padding:"4px 0", display:"flex", gap:10 }}>
+          <span style={{ color:"rgba(var(--ink),0.5)", whiteSpace:"nowrap", minWidth:62 }}>{new Date(r.ts).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit", second:"2-digit" })}</span>
+          <span style={{ fontWeight:700, whiteSpace:"nowrap", color: /guard ?ia/i.test(r.pessoa) ? "#14b8a6" : /^sistema$/i.test(r.pessoa) ? "#64748b" : "var(--tx)" }}>{r.pessoa}</span>
+          <span style={{ whiteSpace:"pre-wrap", color: r.bot ? "#ef4444" : "var(--tx)" }}>{r.bot ? "🤖 " : ""}{r.texto}</span>
+        </div>))}
+    </div>
+  );
+}
+function ListaLogs({ rows, supabaseClient, mostrarPessoa }) {
+  const [aberta, setAberta] = useState(null);
+  const td = { padding:"8px 12px", fontSize:12.5, borderBottom:"1px solid rgba(var(--ink),0.05)", textAlign:"left", verticalAlign:"top" };
+  const th = { ...td, fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", borderBottom:"1px solid var(--border)", position:"sticky", top:0, background:"var(--card)" };
+  return (
+    <table style={{ width:"100%", borderCollapse:"collapse" }}>
+      <thead><tr><th style={th}>Quando</th>{mostrarPessoa && <th style={th}>Operador</th>}<th style={th}>Comentário</th><th style={th}>Cliente / evento</th><th style={th}>Fechou</th></tr></thead>
+      <tbody>{rows.map((r, i) => (
+        <React.Fragment key={r.segware_id + r.ts + i}>
+          <tr onClick={() => setAberta(aberta === i ? null : i)} style={{ cursor:"pointer", background: aberta === i ? "rgba(14,165,233,0.06)" : r.bot ? "rgba(239,68,68,0.04)" : "transparent" }}>
+            <td style={{ ...td, whiteSpace:"nowrap" }}>{new Date(r.ts).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</td>
+            {mostrarPessoa && <td style={{ ...td, fontWeight:600, whiteSpace:"nowrap" }}>{r.pessoa}</td>}
+            <td style={{ ...td, maxWidth:520 }}>{r.bot ? <span style={{ display:"inline-block", fontSize:10.5, fontWeight:800, color:"#ef4444", background:"rgba(239,68,68,0.1)", border:"1px solid rgba(239,68,68,0.3)", borderRadius:6, padding:"1px 6px", marginRight:6 }}>🤖 BOT</span> : null}<span style={{ whiteSpace:"pre-wrap" }}>{r.texto}</span></td>
+            <td style={td}><div style={{ fontWeight:600, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.nome_cliente}>{r.nome_cliente}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.5)", maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.descricao}>conta {r.codigo_cliente} · {r.descricao}</div></td>
+            <td style={{ ...td, fontSize:12, whiteSpace:"nowrap" }}>{r.fechada_por || "—"}</td>
+          </tr>
+          {aberta === i && <tr><td colSpan={mostrarPessoa ? 5 : 4} style={{ padding:0 }}><LinhaTempoOcorrencia id={r.segware_id} supabaseClient={supabaseClient} /></td></tr>}
+        </React.Fragment>))}</tbody>
+    </table>
+  );
+}
+function LogsOperadorModal({ op, periodo, filial, supabaseClient, onClose }) {
+  const [rows, setRows] = useState(null); const [soBot, setSoBot] = useState(false); const [busca, setBusca] = useState(""); const [erro, setErro] = useState("");
+  useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  useEffect(() => {
+    const [a, b] = periodoGuardia(periodo); setRows(null);
+    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:op.nomes, p_texto:null, p_so_bot:false, p_filial: filial === "Todas" ? null : filial })
+      .then(({ data, error }) => { if (error) setErro(error.message); else setRows(data || []); });
+  }, [op, periodo, filial, supabaseClient]);
+  const vis = (rows || []).filter(r => (!soBot || r.bot) && (!busca || String(r.texto).toLowerCase().includes(busca.toLowerCase())));
+  const btn = { padding:"7px 13px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, fontWeight:600, cursor:"pointer" };
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"28px 14px", overflowY:"auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1150px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)", flexWrap:"wrap" }}>
+          <div><div style={{ fontSize:18, fontWeight:800 }}>🧾 {op.nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{op.nomes.length > 1 ? "Logins: " + op.nomes.join(", ") + " · " : ""}{op.comentarios} comentários · {op.bot} do Operador Bot ({fmtPct(pctIA(op.bot, op.comentarios))})</div></div>
+          <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+            <label style={{ display:"flex", gap:6, alignItems:"center", fontSize:13, cursor:"pointer" }}><input type="checkbox" checked={soBot} onChange={e => setSoBot(e.target.checked)} /> Só Operador Bot</label>
+            <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔍 Buscar no texto…" style={{ ...btn, fontWeight:400, cursor:"text", minWidth:180 }} />
+            <button onClick={() => exportarLogsXlsx(vis, "logs_" + op.nome.replace(/\W+/g, "_") + ".xlsx")} style={btn} disabled={!vis.length}>⬇ Excel</button>
+            <button onClick={onClose} style={btn}>✕ Fechar</button>
+          </div>
+        </div>
+        {erro && <div style={{ padding:"10px 20px", color:"#ef4444" }}>Erro: {erro}</div>}
+        <div style={{ padding:"6px 8px 14px", maxHeight:"72vh", overflowY:"auto" }}>
+          {!rows ? <div style={{ padding:20 }}>Carregando…</div> : vis.length === 0 ? <div style={{ padding:20 }}>Nenhum comentário.</div> : <ListaLogs rows={vis} supabaseClient={supabaseClient} />}
+          {rows && rows.length >= 2000 && <div style={{ padding:"8px 12px", fontSize:12, color:"#f59e0b" }}>Mostrando os 2.000 mais recentes — reduza o período para ver o restante.</div>}
+        </div>
+        <div style={{ padding:"0 20px 14px", fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Clique num comentário para ver o histórico completo da ocorrência (todos que mexeram nela). Em vermelho: texto gerado pelo Operador Bot.</div>
+      </div>
+    </div>
+  );
+}
+
+function LogsOperadoresTab({ supabaseClient }) {
+  const [periodo, setPeriodo] = useState("7d");
+  const [filial, setFilial] = useState("Todas");
+  const [dados, setDados] = useState(null); const [erro, setErro] = useState(""); const [carregando, setCarregando] = useState(false);
+  const [ordem, setOrdem] = useState("pct");
+  const [opSel, setOpSel] = useState(null);
+  const [busca, setBusca] = useState(""); const [buscaSoBot, setBuscaSoBot] = useState(false); const [res, setRes] = useState(null); const [buscando, setBuscando] = useState(false);
+  const chartRef = useRef(null), chartInst = useRef(null);
+
+  const carregar = useCallback(() => {
+    const [a, b] = periodoGuardia(periodo);
+    setCarregando(true); setErro("");
+    supabaseClient.rpc("segware_logs_operadores", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })
+      .then(({ data, error }) => { setCarregando(false); if (error) setErro(error.message); else setDados(data); });
+  }, [periodo, filial, supabaseClient]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const brutos = (dados && dados.operadores) || [];
+  const ops = useMemo(() => {
+    const g = agruparOperadores(brutos.map(r => ({ nome:r.nome, assumiu:0, fechou:r.fechou, comentarios:r.comentarios, med_atender:null, med_atendimento:null })))
+      .filter(o => o.tipo === "humano" || o.tipo === "apoio");
+    const campos = ["bot", "ocorrencias", "oc_so_bot", "fechou_so_bot", "fechou_sem_texto", "fechou_com_texto"];
+    return g.map(o => { const x = { ...o }; campos.forEach(c => { x[c] = brutos.filter(r => o.nomes.includes(r.nome)).reduce((n, r) => n + (r[c] || 0), 0); }); x.pct = pctIA(x.bot, x.comentarios); x.pctFechSoBot = pctIA(x.fechou_so_bot, x.fechou); return x; });
+  }, [dados]);
+  const ord = useMemo(() => { const f = { pct:o => o.pct, bot:o => o.bot, comentarios:o => o.comentarios, fechou:o => o.fechou, fechSoBot:o => o.pctFechSoBot, semTexto:o => pctIA(o.fechou_sem_texto, o.fechou) }[ordem]; return ops.filter(o => o.comentarios + o.fechou >= 5).slice().sort((a, b) => f(b) - f(a)); }, [ops, ordem]);
+  const tot = ops.reduce((t, o) => ({ c:t.c + o.comentarios, b:t.b + o.bot, f:t.f + o.fechou, fsb:t.fsb + o.fechou_so_bot, fst:t.fst + o.fechou_sem_texto }), { c:0, b:0, f:0, fsb:0, fst:0 });
+  const usamBot = ops.filter(o => o.bot > 0).length, maioriaBot = ops.filter(o => o.comentarios >= 20 && o.pct >= 50).length;
+  const dias = (dados && dados.dias) || [];
+
+  const corTexto = "rgba(" + getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() + ",0.55)";
+  useEffect(() => {
+    if (!chartRef.current) return;
+    if (chartInst.current) chartInst.current.destroy();
+    chartInst.current = new Chart(chartRef.current, {
+      data:{ labels:dias.map(d => diaBR(d.dia)), datasets:[
+        { type:"bar", label:"Escrito pelo operador", data:dias.map(d => d.comentarios - d.bot), backgroundColor:"rgba(14,165,233,0.55)", stack:"s", yAxisID:"y", borderRadius:3 },
+        { type:"bar", label:"Operador Bot", data:dias.map(d => d.bot), backgroundColor:"rgba(239,68,68,0.7)", stack:"s", yAxisID:"y", borderRadius:3 },
+        { type:"line", label:"% do Operador Bot", data:dias.map(d => pctIA(d.bot, d.comentarios)), borderColor:"#ef4444", backgroundColor:"#ef4444", tension:0.35, pointRadius:3, borderWidth:2.5, yAxisID:"y1" },
+      ] },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ position:"bottom", labels:{ color:corTexto, usePointStyle:true, boxWidth:8 } },
+          tooltip:{ callbacks:{ label:c => c.dataset.yAxisID === "y1" ? " " + c.dataset.label + ": " + fmtPct(c.raw) : " " + c.dataset.label + ": " + c.raw } } },
+        scales:{ x:{ stacked:true, ticks:{ color:corTexto }, grid:{ display:false } },
+          y:{ stacked:true, beginAtZero:true, ticks:{ color:corTexto, precision:0 }, grid:{ color:"rgba(128,128,128,0.12)" }, title:{ display:true, text:"comentários", color:corTexto } },
+          y1:{ beginAtZero:true, position:"right", ticks:{ color:"#ef4444", callback:v => v + "%" }, grid:{ display:false } } } }
+    });
+    return () => { if (chartInst.current) chartInst.current.destroy(); };
+  }, [dias]);
+
+  const buscar = () => {
+    const [a, b] = periodoGuardia(periodo); setBuscando(true);
+    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:null, p_texto: busca.trim() || null, p_so_bot:buscaSoBot, p_filial: filial === "Todas" ? null : filial })
+      .then(({ data, error }) => { setBuscando(false); if (error) setErro(error.message); else setRes(data || []); });
+  };
+  const filiais = ["Todas", ...(((dados && dados.filiais_disponiveis) || []).slice().sort())];
+  const selStyle = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
+  const th = { padding:"10px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"right", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", cursor:"pointer", userSelect:"none" };
+  const td = { padding:"10px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)", textAlign:"right" };
+  const thOrd = (key, label, left, tip) => <th title={tip} style={{ ...th, textAlign:left ? "left" : "right", color: ordem === key ? "var(--tx)" : th.color }} onClick={() => key && setOrdem(key)}>{label}{ordem === key ? " ▼" : ""}</th>;
+  const corPct = p => p >= 50 ? "#ef4444" : p >= 20 ? "#f59e0b" : "#10b981";
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center", marginBottom:18 }}>
+        <select value={periodo} onChange={e => setPeriodo(e.target.value)} style={selStyle}>{PERIODOS_GUARDIA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+        <button onClick={carregar} style={{ ...selStyle, fontWeight:600 }}>{carregando ? "Atualizando…" : "↻ Atualizar"}</button>
+      </div>
+      {erro && <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", color:"#ef4444", fontSize:13 }}>Erro: {erro}</div>}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:14, marginBottom:18 }}>
+        <KPICard label="Comentários dos operadores" value={tot.c.toLocaleString("pt-BR")} sub={ops.length + " operadores/apoio com registro"} icon="✍️" accent="#0ea5e9" />
+        <KPICard label="Gerados pelo Operador Bot" value={tot.b.toLocaleString("pt-BR")} sub={fmtPct(pctIA(tot.b, tot.c)) + " de tudo que foi escrito · " + usamBot + " operadores usam"} icon="🤖" accent="#ef4444" />
+        <KPICard label="Fechadas só com texto do bot" value={tot.fsb.toLocaleString("pt-BR")} sub={fmtPct(pctIA(tot.fsb, tot.f)) + " das ocorrências fechadas por operador"} icon="⚠️" accent="#f59e0b" />
+        <KPICard label="Fechadas sem comentar" value={tot.fst.toLocaleString("pt-BR")} sub={fmtPct(pctIA(tot.fst, tot.f)) + " — operador fechou sem escrever nada"} icon="🔕" accent="#64748b" />
+        <KPICard label="Operadores com maioria bot" value={maioriaBot} sub="50% ou mais do que escreveram (mín. 20 comentários)" icon="🚩" accent="#8b5cf6" />
+      </div>
+
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>📈 Dia a dia — escrito pelo operador × Operador Bot</div>
+        <div style={{ position:"relative", height:280, padding:"0 14px 14px" }}><canvas ref={chartRef} /></div>
+      </Card>
+
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ padding:"16px 20px 4px", fontWeight:700, fontSize:15 }}>👤 Por operador <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· clique no nome para ler os comentários · clique no título da coluna para ordenar</span></div>
+        <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse", marginTop:6 }}>
+          <thead><tr>
+            {thOrd("comentarios", "Operador", true)}{thOrd("comentarios", "Comentários")}{thOrd("bot", "Do bot")}{thOrd("pct", "% bot", true)}
+            {thOrd(null, "Ocorr. comentadas", false, "Ocorrências em que o operador escreveu algo")}{thOrd(null, "Só bot", false, "Ocorrências em que tudo o que o operador escreveu veio do Operador Bot")}
+            {thOrd("fechou", "Fechou")}{thOrd("fechSoBot", "Fechou só c/ bot", false, "Fechou a ocorrência e o único texto dele nela é do Operador Bot")}{thOrd("semTexto", "Fechou sem comentar", false, "Fechou a ocorrência sem escrever nada nela")}
+          </tr></thead>
+          <tbody>{ord.length === 0 ? <tr><td style={{ ...td, textAlign:"left" }} colSpan={9}>{carregando ? "Carregando…" : "Sem comentários no período (os logs começam a ser guardados a partir da carga do histórico)."}</td></tr> : ord.map(o => (
+            <tr key={o.nome} onClick={() => setOpSel(o)} style={{ cursor:"pointer" }}>
+              <td style={{ ...td, textAlign:"left", fontWeight:700 }}>{o.nome}{o.nomes.length > 1 ? <span title={o.nomes.join("\n")} style={{ fontWeight:500, fontSize:11, color:"rgba(var(--ink),0.5)", marginLeft:6 }}>({o.nomes.length} logins)</span> : null}{o.tipo === "apoio" ? <span style={{ fontWeight:500, fontSize:11, color:"rgba(var(--ink),0.5)", marginLeft:6 }}>· apoio</span> : null}</td>
+              <td style={td}>{o.comentarios.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, fontWeight:700, color: o.bot ? "#ef4444" : td.color }}>{o.bot.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, textAlign:"left", minWidth:130 }}><b style={{ color:corPct(o.pct) }}>{fmtPct(o.pct)}</b><div style={{ height:6, borderRadius:99, background:"rgba(var(--ink),0.07)", marginTop:4 }}><div style={{ width:Math.min(100, o.pct) + "%", height:"100%", borderRadius:99, background:corPct(o.pct) }} /></div></td>
+              <td style={td}>{o.ocorrencias.toLocaleString("pt-BR")}</td>
+              <td style={td}>{o.oc_so_bot.toLocaleString("pt-BR")}</td>
+              <td style={td}>{o.fechou.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, color: o.pctFechSoBot >= 50 ? "#ef4444" : td.color }}>{o.fechou_so_bot.toLocaleString("pt-BR")} <span style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>({fmtPct(o.pctFechSoBot)})</span></td>
+              <td style={td}>{o.fechou_sem_texto.toLocaleString("pt-BR")} <span style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>({fmtPct(pctIA(o.fechou_sem_texto, o.fechou))})</span></td>
+            </tr>))}</tbody>
+        </table></div>
+      </Card>
+
+      <Card>
+        <div style={{ padding:"16px 20px 10px", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontWeight:700, fontSize:15 }}>🔍 Buscar nos logs</span>
+          <input value={busca} onChange={e => setBusca(e.target.value)} onKeyDown={e => e.key === "Enter" && buscar()} placeholder="texto do comentário (ex.: não atendeu, viatura, senha)…" style={{ ...selStyle, cursor:"text", minWidth:300, flex:1 }} />
+          <label style={{ display:"flex", gap:6, alignItems:"center", fontSize:13, cursor:"pointer" }}><input type="checkbox" checked={buscaSoBot} onChange={e => setBuscaSoBot(e.target.checked)} /> Só Operador Bot</label>
+          <button onClick={buscar} style={{ ...selStyle, fontWeight:700 }}>{buscando ? "Buscando…" : "Buscar"}</button>
+          {res && res.length > 0 && <button onClick={() => exportarLogsXlsx(res, "logs_operadores.xlsx")} style={{ ...selStyle, fontWeight:600 }}>⬇ Excel ({res.length})</button>}
+        </div>
+        {res && <div style={{ padding:"0 8px 14px", maxHeight:520, overflowY:"auto" }}>{res.length === 0 ? <div style={{ padding:12 }}>Nada encontrado.</div> : <ListaLogs rows={res} supabaseClient={supabaseClient} mostrarPessoa />}</div>}
+      </Card>
+      <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
+        Fonte: histórico (logs) das ocorrências na Segware, guardado a cada sincronização. "Operador Bot" = comentário com a marca "(Operador Bot)"/"(bot)" lançado no login do operador.
+        GuardIA e Sistema ficam de fora (a GuardIA tem página própria). Logins da mesma pessoa aparecem juntos. Operadores com menos de 5 registros no período não aparecem na tabela.
+      </div>
+      {opSel && <Portal><LogsOperadorModal op={opSel} periodo={periodo} filial={filial} supabaseClient={supabaseClient} onClose={() => setOpSel(null)} /></Portal>}
+    </div>
+  );
+}
+
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
   { key:"hiseg",  label:"Hiseg Ceará",  icone:"🏢", cor:"#a855f7" },
@@ -6717,6 +6924,7 @@ const TAB_TITLES={
   analiseEventos:"Análise de Eventos",
   central:"Central",
   guardia:"GuardIA",
+  logsOperadores:"Logs dos operadores",
   relatorios:"Relatórios",
   importacao:"Importação",
   usuarios:"Usuários",
@@ -6735,6 +6943,7 @@ const TAB_SUBTITLES={
   analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
   central:"Tempo de atendimento, ocorrências e desempenho dos operadores",
   guardia:"Desempenho e evolução da IA (GuardIA) na central",
+  logsOperadores:"O que cada operador escreveu nas ocorrências e quanto veio do Operador Bot",
   relatorios:"Exportação de dados para planilha",
   importacao:"Importação de planilhas e integração Segware",
   usuarios:"Gestão de usuários do sistema",
@@ -6744,6 +6953,7 @@ const SIDEBAR_NAV=[
   { groupKey:"operacao", groupLabel:"Operação", groupIcon:"🚦", items:[
     { key:"central", label:"Central", icon:"🎧", accent:"#0ea5e9" },
     { key:"guardia", label:"GuardIA", icon:"🤖", accent:"#14b8a6" },
+    { key:"logsOperadores", label:"Logs dos operadores", icon:"🧾", accent:"#ef4444" },
     { key:"analiseDeslocamento", label:"Deslocamentos", icon:"🚦", accent:"#6366f1" },
     { key:"portaria", label:"Portaria Inteligente", icon:"🏢", accent:"#8b5cf6", badgeKey:"piCount" },
     { key:"filiais", label:"Filiais", icon:"🏢", accent:"#06b6d4" },
@@ -7352,6 +7562,7 @@ function App() {
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
       {aba==="central"&&<CentralTab supabaseClient={supabaseClient} />}
       {aba==="guardia"&&<GuardiaTab supabaseClient={supabaseClient} />}
+      {aba==="logsOperadores"&&<LogsOperadoresTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
