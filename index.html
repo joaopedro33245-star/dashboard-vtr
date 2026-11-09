@@ -5683,11 +5683,13 @@ function VariacaoTag({ atual, anterior, grande }) {
 
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
-  { key:"hiseg",  label:"Condomínios Hiseg",  icone:"🏢", cor:"#a855f7" },
+  { key:"hiseg",  label:"Hiseg Ceará",  icone:"🏢", cor:"#a855f7" },
+  { key:"hiseg_ba", label:"Hiseg Bahia", icone:"🏙️", cor:"#d946ef" },
   { key:"cond",   label:"Nossos condomínios (Portaria Inteligente)", icone:"🏘️", cor:"#06b6d4" },
   { key:"outros", label:"Demais clientes",    icone:"🏪", cor:"#64748b" },
 ];
-function grupoDoCliente(nome) {
+function grupoDoCliente(nome, filial) {
+  if (filial === "HISEG BAHIA") return "hiseg_ba";
   const n = normEvento(nome);
   if (/HISEG/.test(n)) return "hiseg";
   if (/PORTARIA INTELIGENTE/.test(n)) return "cond"; // nossos condomínios = Portaria Inteligente; demais condomínios são clientes normais
@@ -5699,7 +5701,81 @@ function zonaDoDisparo(desc) {
   const z = String(desc || "").trim().replace(/^(ALARME|DISPARO)\s*[-–]?\s*(24\s*HORAS\s*[-–]?\s*)?/i, "").replace(/\s+/g, " ").trim();
   return z || "(sem nome de zona)";
 }
-function ClienteEventosModal({ cliente, eventosSaude, semanaInicial, supabaseClient, onClose }) {
+// ── Cobrança: texto pronto para enviar aos responsáveis (WhatsApp / e-mail) ──
+function CobrancaModal({ itens, catKey, catLabel, semana, semanaAnt, contexto, supabaseClient, onClose }) {
+  const [soAumento, setSoAumento] = useState(false);
+  const [zonas, setZonas] = useState({});
+  const [editado, setEditado] = useState(null);
+  const [copiado, setCopiado] = useState(false);
+  useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
+  useEffect(() => {
+    if (catKey !== "disparos" || !supabaseClient || !semana) return;
+    let vivo = true;
+    const ini = new Date(semana + "T00:00:00"), fim = new Date(ini); fim.setDate(fim.getDate() + 7);
+    (async () => {
+      const out = {};
+      for (const it of itens) {
+        const { data } = await supabaseClient.rpc("segware_cliente_eventos", { p_codigo:it.codigo, p_filial:it.filial, p_desde:ini.toISOString(), p_ate:fim.toISOString() });
+        const m = {}; (data || []).filter(e => e.categoria === "disparos").forEach(e => { const z = zonaDoDisparo(e.descricao); m[z] = (m[z] || 0) + 1; });
+        out[it.codigo + "||" + it.filial] = Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 3);
+        if (!vivo) return; setZonas({ ...out });
+      }
+    })();
+    return () => { vivo = false; };
+  }, [itens, catKey, semana, supabaseClient]);
+  const lista = soAumento ? itens.filter(x => x.atual > x.anterior) : itens;
+  const varTxt = x => x.anterior === 0 ? "novo (semana anterior: 0)" : (x.atual >= x.anterior ? "▲ +" : "▼ ") + (x.atual - x.anterior) + " (" + (x.atual >= x.anterior ? "+" : "") + Math.round((x.atual - x.anterior) / x.anterior * 100) + "%) · semana anterior: " + x.anterior;
+  const assunto = "Cobrança – " + catLabel + " recorrentes – semana " + (semana ? weekLabel(semana) : "");
+  const texto = useMemo(() => {
+    const l = [];
+    l.push("*Cobrança – " + catLabel + " recorrentes*");
+    l.push("Semana " + (semana ? weekLabel(semana) : "—") + (semanaAnt ? " (comparada com " + weekLabel(semanaAnt) + ")" : ""));
+    if (contexto) l.push(contexto);
+    l.push("");
+    l.push((lista.length === 1 ? "O cliente abaixo teve " : "Os clientes abaixo tiveram ") + catLabel.toLowerCase() + " acima do normal e " + (lista.length === 1 ? "precisa" : "precisam") + " de verificação técnica:");
+    l.push("");
+    lista.forEach((x, i) => {
+      l.push((i + 1) + ") " + x.nome + " – conta " + x.codigo + " (" + x.filial + ")");
+      l.push("   " + x.atual + " na semana · " + varTxt(x));
+      const z = zonas[x.codigo + "||" + x.filial];
+      if (catKey === "disparos" && z && z.length) l.push("   " + (z.length > 1 ? "Zonas que mais dispararam: " : "Zona que mais disparou: ") + z.map(([n, q]) => n + " (" + q + "x)").join(", "));
+      l.push("");
+    });
+    l.push("Por favor, verificar " + (catKey === "disparos" ? "as zonas/sensores indicados" : "os equipamentos") + " e retornar com a previsão de atendimento.");
+    l.push("");
+    l.push("Central de Monitoramento – Servis Eletrônica");
+    return l.join("\n");
+  }, [lista, zonas, catKey, catLabel, semana, semanaAnt, contexto]);
+  const valor = editado !== null ? editado : texto;
+  const carregandoZonas = catKey === "disparos" && Object.keys(zonas).length < itens.length;
+  const btn = { padding:"8px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, fontWeight:600, cursor:"pointer" };
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:1100, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"32px 16px", overflowY:"auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(760px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)" }}>
+          <div><div style={{ fontSize:17, fontWeight:800 }}>📋 Cobrança – {catLabel}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{lista.length} cliente(s){contexto ? " · " + contexto : ""}</div></div>
+          <button onClick={onClose} style={btn}>✕ Fechar</button>
+        </div>
+        <div style={{ padding:"14px 20px" }}>
+          <div style={{ display:"flex", gap:14, alignItems:"center", flexWrap:"wrap", marginBottom:10, fontSize:13 }}>
+            {itens.length > 1 && <label style={{ display:"flex", gap:6, alignItems:"center", cursor:"pointer" }}><input type="checkbox" checked={soAumento} onChange={e => { setSoAumento(e.target.checked); setEditado(null); }} /> Só os que aumentaram</label>}
+            {carregandoZonas && <span style={{ color:"#f59e0b" }}>Buscando as zonas que mais dispararam… ({Object.keys(zonas).length}/{itens.length})</span>}
+            {editado !== null && <button onClick={() => setEditado(null)} style={{ ...btn, padding:"4px 10px", fontSize:12 }}>↺ Restaurar texto</button>}
+          </div>
+          <textarea value={valor} onChange={e => setEditado(e.target.value)} rows={18} style={{ width:"100%", boxSizing:"border-box", padding:12, borderRadius:10, border:"1px solid var(--border)", background:"rgba(var(--ink),0.03)", color:"var(--tx)", fontSize:13, fontFamily:"inherit", lineHeight:1.5, resize:"vertical" }} />
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginTop:12 }}>
+            <button onClick={() => { navigator.clipboard.writeText(valor).then(() => { setCopiado(true); setTimeout(() => setCopiado(false), 2000); }); }} style={{ ...btn, borderColor:"#3b82f6", color:"#3b82f6" }}>{copiado ? "✅ Copiado" : "📄 Copiar texto"}</button>
+            <button onClick={() => window.open("https://wa.me/?text=" + encodeURIComponent(valor), "_blank")} style={{ ...btn, borderColor:"#10b981", color:"#10b981" }}>💬 Enviar no WhatsApp</button>
+            <button onClick={() => { window.location.href = "mailto:?subject=" + encodeURIComponent(assunto) + "&body=" + encodeURIComponent(valor.replace(/\*/g, "")); }} style={btn}>✉️ Abrir no e-mail</button>
+          </div>
+          <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)", marginTop:10 }}>O texto pode ser editado antes de enviar. No WhatsApp e no e-mail você escolhe o destinatário.</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClienteEventosModal({ cliente, eventosSaude, semanaInicial, supabaseClient, onClose, onCobranca }) {
   const th = { padding:"9px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap" };
   const td = { padding:"9px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)" };
   useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
@@ -5754,7 +5830,10 @@ function ClienteEventosModal({ cliente, eventosSaude, semanaInicial, supabaseCli
             <div style={{ fontSize:18, fontWeight:800 }}>{cliente.nome}</div>
             <div style={{ fontSize:12, color:"rgba(var(--ink),0.5)", fontFamily:"monospace" }}>{cliente.codigo} · {cliente.filial}</div>
           </div>
-          <button onClick={onClose} style={{ border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14 }}>✕ Fechar</button>
+          <div style={{ display:"flex", gap:8 }}>
+            {onCobranca && semana && <button onClick={() => onCobranca({ codigo:cliente.codigo, filial:cliente.filial, nome:cliente.nome, atual:(porSemana[semana] || {}).disparos || 0, anterior:(porSemana[semAnt] || {}).disparos || 0 }, semana, semAnt)} style={{ border:"1px solid #ef4444", background:"var(--card)", color:"#ef4444", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14, fontWeight:600 }}>📋 Cobrança</button>}
+            <button onClick={onClose} style={{ border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:14 }}>✕ Fechar</button>
+          </div>
         </div>
 
         <div style={{ padding:"16px 22px 4px", fontWeight:700, fontSize:15 }}>📅 Semana a semana</div>
@@ -5826,6 +5905,10 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
   const chartRef = useRef(null), chartInst = useRef(null);
 
   const filiais = useMemo(() => ["Todas", ...Array.from(new Set(eventosSaude.map(e => e.filial).filter(Boolean))).sort()], [eventosSaude]);
+  const [rota, setRota] = useState("todas");
+  const [cobranca, setCobranca] = useState(null);
+  const rotaMap = useMemo(() => { const m = {}; for (const c of clients) { const a = String(c.area || "").trim().toUpperCase(); if (a) m[`${c.codigo_cliente}||${c.filial}`] = a; } return m; }, [clients]);
+  const rotas = useMemo(() => Array.from(new Set(Object.values(rotaMap))).sort(), [rotaMap]);
   const nomeMap = useMemo(() => { const m = {}; for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.nome_cliente || c.codigo_cliente; return m; }, [clients]);
 
   // classifica uma vez: { semana, cat, chave, g (tipo de cliente) }
@@ -5836,10 +5919,12 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
       const c = categoriaDoEvento(e.evento); if (!c) continue;
       const dt = parseDataHora(e.data_hora); if (!dt) continue;
       const chave = `${e.codigo_cliente}||${e.filial}`;
-      out.push({ semana:getWeekKey(dt), cat:c, chave, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt, q:e.qtd || 1, g:grupoDoCliente(e.nome_cliente || nomeMap[chave]) });
+      const rt = rotaMap[chave] || "";
+      if (rota !== "todas" && (rota === "sem" ? rt !== "" : rt !== rota)) continue;
+      out.push({ semana:getWeekKey(dt), cat:c, chave, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt, q:e.qtd || 1, g:grupoDoCliente(e.nome_cliente || nomeMap[chave], e.filial), rt });
     }
     return out;
-  }, [eventosSaude, filial, nomeMap]);
+  }, [eventosSaude, filial, nomeMap, rota, rotaMap]);
   const base = useMemo(() => grupo === "todos" ? baseAll : baseAll.filter(r => r.g === grupo), [baseAll, grupo]);
   const clientesLista = useMemo(() => {
     const m = {};
@@ -5916,6 +6001,7 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
           <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
           <input list="vtr-clientes-eventos" placeholder="🔍 Abrir cliente (nome ou código)…" onChange={e => { const x = clientesLista.find(c => c.label === e.target.value); if (x) { setClienteSel(x); e.target.value = ""; } }} style={{ ...selStyle, cursor:"text", minWidth:240 }} />
           <datalist id="vtr-clientes-eventos">{clientesLista.map(c => <option key={c.chave} value={c.label} />)}</datalist>
+          <select value={rota} onChange={e => setRota(e.target.value)} style={selStyle}><option value="todas">Todas as rotas</option>{rotas.map(r => <option key={r} value={r}>Rota {r}</option>)}<option value="sem">Sem rota cadastrada</option></select>
           <select value={grupo} onChange={e => setGrupo(e.target.value)} style={selStyle}><option value="todos">Todos os clientes</option>{GRUPOS_CLIENTE.map(g => <option key={g.key} value={g.key}>{g.label}</option>)}</select>
         </div>
       </div>
@@ -5965,7 +6051,9 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
       <div style={{ display:"grid", gridTemplateColumns:"minmax(0,2fr) minmax(280px,1fr)", gap:16, marginBottom:16 }} className="grid-eventos">
         <Card>
           <div style={{ padding:"16px 20px 4px", display:"flex", justifyContent:"space-between", alignItems:"baseline", flexWrap:"wrap", gap:8 }}>
-            <div style={{ fontWeight:700, fontSize:15 }}>{catAtual.icone} Top 15 — {catAtual.label}</div>
+            <div style={{ fontWeight:700, fontSize:15, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>{catAtual.icone} Top 15 — {catAtual.label}
+              {ranking.top.length > 0 && <button onClick={() => setCobranca({ itens:ranking.top.map(x => ({ codigo:x.codigo, filial:x.filial, nome:x.nome, atual:x.atual, anterior:x.anterior })), catKey:cat, catLabel:catAtual.label, semana, semanaAnt })} style={{ padding:"5px 11px", borderRadius:9, border:"1px solid #ef4444", background:"var(--card)", color:"#ef4444", fontSize:12, fontWeight:700, cursor:"pointer" }}>📋 Gerar cobrança</button>}
+            </div>
             <div style={{ fontSize:12, color:"rgba(var(--ink),0.55)" }}>
               <span style={{ color:"#ef4444", fontWeight:700 }}>▲ {ranking.pioraram} aumentaram</span> · <span style={{ color:"#10b981", fontWeight:700 }}>▼ {ranking.melhoraram} diminuíram</span> · {ranking.novos} novo(s)
             </div>
@@ -6010,8 +6098,11 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
           </Card>
         </div>
       </div>
-      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes". Clique num cliente para ver semana a semana e as zonas que mais dispararam.</div>
-      {clienteSel && <ClienteEventosModal cliente={clienteSel} eventosSaude={eventosSaude} semanaInicial={semana} supabaseClient={supabaseClient} onClose={() => setClienteSel(null)} />}
+      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Hiseg Ceará = clientes com "Hiseg" no nome (Servis Ceará); Hiseg Bahia = empresa Hiseg Bahia na Segware; rota = área do cadastro do cliente; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes". Clique num cliente para ver semana a semana e as zonas que mais dispararam.</div>
+      {clienteSel && <ClienteEventosModal cliente={clienteSel} eventosSaude={eventosSaude} semanaInicial={semana} supabaseClient={supabaseClient} onClose={() => setClienteSel(null)}
+        onCobranca={(item, sem, semA) => setCobranca({ itens:[item], catKey:"disparos", catLabel:"Disparos", semana:sem, semanaAnt:semA })} />}
+      {cobranca && <CobrancaModal {...cobranca} supabaseClient={supabaseClient} onClose={() => setCobranca(null)}
+        contexto={[filial !== "Todas" ? filial : "", grupo !== "todos" ? (GRUPOS_CLIENTE.find(g => g.key === grupo) || {}).label : "", rota === "todas" ? "" : rota === "sem" ? "Sem rota cadastrada" : "Rota " + rota].filter(Boolean).join(" · ")} />}
     </div>
   );
 }
@@ -6019,7 +6110,7 @@ function AnaliseEventosTab({ clients, eventosSaude, supabaseClient }) {
 function SaudeClienteTab({ clients, eventosSaude: eventosTodos }) {
   const [mesFiltro, setMesFiltro] = useState("Todos");
   const [grupoSaude, setGrupoSaude] = useState("todos");
-  const eventosSaude = useMemo(() => grupoSaude === "todos" ? eventosTodos : eventosTodos.filter(e => grupoDoCliente(e.nome_cliente) === grupoSaude), [eventosTodos, grupoSaude]);
+  const eventosSaude = useMemo(() => grupoSaude === "todos" ? eventosTodos : eventosTodos.filter(e => grupoDoCliente(e.nome_cliente, e.filial) === grupoSaude), [eventosTodos, grupoSaude]);
 
   const mesesTodos = useMemo(() => {
     const s = new Set();
