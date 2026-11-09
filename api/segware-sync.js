@@ -32,7 +32,8 @@ function dataHoraBR(iso) {
 function paraDeslocamento(o) {
   const st = Array.isArray(o.statuses) ? o.statuses : [];
   const desl = st.filter(s => STATUS_DESLOCAMENTO.has(Number(s.status)));
-  if (!desl.length && !o.patrolCarId) return null;
+  // Igual ao relatório "Deslocamento de viaturas" da Segware: só conta quando a viatura chegou no local (status 4)
+  if (!desl.some(s => Number(s.status) === 4)) return null;
   const filial = FILIAL_POR_ESTADO[semAcento(o.stateName)] || FILIAL_POR_EMPRESA[o.companyId];
   if (!filial) return { ignorado: true };
   const carros = [...new Set(desl.map(s => (s.patrolCarDescription || "").trim()).filter(Boolean))];
