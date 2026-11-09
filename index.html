@@ -6125,6 +6125,7 @@ function GuardiaTab({ supabaseClient }) {
 // ═══════════════════════════════════════════════════════════════
 // Logs dos operadores — o que cada operador escreveu nas ocorrências e quanto veio do "Operador Bot"
 // ═══════════════════════════════════════════════════════════════
+const TIPOS_EVENTO_LOG = ["Disparo / alarme","Não armado","Bateria","Comunicação / keep alive","Vídeo / câmera","Falta de energia","Falha técnica / equipamento","Alerta / tampa","Arme / desarme / acesso","Ronda / evento manual","Pânico / coação","Outros"];
 const ehBotTexto = t => /operador bot|\(bot\)/i.test(String(t || ""));
 function exportarLogsXlsx(rows, nomeArq) {
   const dados = rows.map(r => ({
@@ -6171,21 +6172,21 @@ function ListaLogs({ rows, supabaseClient, mostrarPessoa }) {
     </table>
   );
 }
-function LogsOperadorModal({ op, periodo, filial, supabaseClient, onClose }) {
+function LogsOperadorModal({ op, periodo, filial, tipo, supabaseClient, onClose }) {
   const [rows, setRows] = useState(null); const [soBot, setSoBot] = useState(false); const [busca, setBusca] = useState(""); const [erro, setErro] = useState("");
   useEffect(() => { const k = e => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
   useEffect(() => {
     const [a, b] = periodoGuardia(periodo); setRows(null);
-    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:op.nomes, p_texto:null, p_so_bot:false, p_filial: filial === "Todas" ? null : filial })
+    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:op.nomes, p_texto:null, p_so_bot:false, p_filial: filial === "Todas" ? null : filial, p_tipo: !tipo || tipo === "Todos" ? null : tipo })
       .then(({ data, error }) => { if (error) setErro(error.message); else setRows(data || []); });
-  }, [op, periodo, filial, supabaseClient]);
+  }, [op, periodo, filial, tipo, supabaseClient]);
   const vis = (rows || []).filter(r => (!soBot || r.bot) && (!busca || String(r.texto).toLowerCase().includes(busca.toLowerCase())));
   const btn = { padding:"7px 13px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, fontWeight:600, cursor:"pointer" };
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9000, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"28px 14px", overflowY:"auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background:"var(--card)", color:"var(--tx)", borderRadius:16, border:"1px solid var(--border)", width:"min(1150px,100%)", boxShadow:"0 24px 60px rgba(0,0,0,0.35)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, padding:"16px 20px", borderBottom:"1px solid var(--border)", flexWrap:"wrap" }}>
-          <div><div style={{ fontSize:18, fontWeight:800 }}>🧾 {op.nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{op.nomes.length > 1 ? "Logins: " + op.nomes.join(", ") + " · " : ""}{op.comentarios} comentários · {op.bot} do Operador Bot ({fmtPct(pctIA(op.bot, op.comentarios))})</div></div>
+          <div><div style={{ fontSize:18, fontWeight:800 }}>🧾 {op.nome}</div><div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>{op.nomes.length > 1 ? "Logins: " + op.nomes.join(", ") + " · " : ""}{tipo && tipo !== "Todos" ? "Evento: " + tipo + " · " : ""}{op.comentarios} comentários · {op.bot} do Operador Bot ({fmtPct(pctIA(op.bot, op.comentarios))})</div></div>
           <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
             <label style={{ display:"flex", gap:6, alignItems:"center", fontSize:13, cursor:"pointer" }}><input type="checkbox" checked={soBot} onChange={e => setSoBot(e.target.checked)} /> Só Operador Bot</label>
             <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="🔍 Buscar no texto…" style={{ ...btn, fontWeight:400, cursor:"text", minWidth:180 }} />
@@ -6207,6 +6208,7 @@ function LogsOperadorModal({ op, periodo, filial, supabaseClient, onClose }) {
 function LogsOperadoresTab({ supabaseClient }) {
   const [periodo, setPeriodo] = useState("7d");
   const [filial, setFilial] = useState("Todas");
+  const [tipoEv, setTipoEv] = useState("Todos");
   const [dados, setDados] = useState(null); const [erro, setErro] = useState(""); const [carregando, setCarregando] = useState(false);
   const [ordem, setOrdem] = useState("pct");
   const [opSel, setOpSel] = useState(null);
@@ -6216,9 +6218,9 @@ function LogsOperadoresTab({ supabaseClient }) {
   const carregar = useCallback(() => {
     const [a, b] = periodoGuardia(periodo);
     setCarregando(true); setErro("");
-    supabaseClient.rpc("segware_logs_operadores", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })
+    supabaseClient.rpc("segware_logs_operadores", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial, p_tipo: tipoEv === "Todos" ? null : tipoEv })
       .then(({ data, error }) => { setCarregando(false); if (error) setErro(error.message); else setDados(data); });
-  }, [periodo, filial, supabaseClient]);
+  }, [periodo, filial, tipoEv, supabaseClient]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const brutos = (dados && dados.operadores) || [];
@@ -6255,7 +6257,7 @@ function LogsOperadoresTab({ supabaseClient }) {
 
   const buscar = () => {
     const [a, b] = periodoGuardia(periodo); setBuscando(true);
-    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:null, p_texto: busca.trim() || null, p_so_bot:buscaSoBot, p_filial: filial === "Todas" ? null : filial })
+    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:null, p_texto: busca.trim() || null, p_so_bot:buscaSoBot, p_filial: filial === "Todas" ? null : filial, p_tipo: tipoEv === "Todos" ? null : tipoEv })
       .then(({ data, error }) => { setBuscando(false); if (error) setErro(error.message); else setRes(data || []); });
   };
   const filiais = ["Todas", ...(((dados && dados.filiais_disponiveis) || []).slice().sort())];
@@ -6274,6 +6276,10 @@ function LogsOperadoresTab({ supabaseClient }) {
       </div>
       {erro && <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", color:"#ef4444", fontSize:13 }}>Erro: {erro}</div>}
 
+      <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:16 }}>
+        <span style={{ fontSize:12, fontWeight:700, color:"rgba(var(--ink),0.5)", marginRight:4 }}>EVENTO:</span>
+        {["Todos", ...TIPOS_EVENTO_LOG].map(t => <button key={t} onClick={() => setTipoEv(t)} style={{ padding:"5px 12px", borderRadius:999, border:"1px solid " + (tipoEv === t ? "#ef4444" : "var(--border)"), background: tipoEv === t ? "rgba(239,68,68,0.12)" : "var(--card)", color:"var(--tx)", fontSize:12, fontWeight:700, cursor:"pointer" }}>{t === "Todos" ? "Todos os eventos" : t}</button>)}
+      </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:14, marginBottom:18 }}>
         <KPICard label="Comentários dos operadores" value={tot.c.toLocaleString("pt-BR")} sub={ops.length + " operadores/apoio com registro"} icon="✍️" accent="#0ea5e9" />
         <KPICard label="Gerados pelo Operador Bot" value={tot.b.toLocaleString("pt-BR")} sub={fmtPct(pctIA(tot.b, tot.c)) + " de tudo que foi escrito · " + usamBot + " operadores usam"} icon="🤖" accent="#ef4444" />
@@ -6285,6 +6291,22 @@ function LogsOperadoresTab({ supabaseClient }) {
       <Card style={{ marginBottom:16 }}>
         <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>📈 Dia a dia — escrito pelo operador × Operador Bot</div>
         <div style={{ position:"relative", height:280, padding:"0 14px 14px" }}><canvas ref={chartRef} /></div>
+      </Card>
+
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ padding:"16px 20px 4px", fontWeight:700, fontSize:15 }}>🧩 Por tipo de evento <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· em quais eventos o bot mais escreve · clique para filtrar a página</span></div>
+        <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse", marginTop:6 }}>
+          <thead><tr><th style={{ ...th, textAlign:"left", cursor:"default" }}>Evento</th><th style={{ ...th, cursor:"default" }}>Ocorrências</th><th style={{ ...th, cursor:"default" }}>Comentários</th><th style={{ ...th, cursor:"default" }}>Do bot</th><th style={{ ...th, textAlign:"left", cursor:"default" }}>% bot</th><th style={{ ...th, cursor:"default" }}>Fechadas sem comentar</th></tr></thead>
+          <tbody>{((dados && dados.tipos) || []).map(t => { const p = pctIA(t.bot, t.comentarios); return (
+            <tr key={t.tipo} onClick={() => setTipoEv(tipoEv === t.tipo ? "Todos" : t.tipo)} style={{ cursor:"pointer", background: tipoEv === t.tipo ? "rgba(239,68,68,0.06)" : "transparent" }}>
+              <td style={{ ...td, textAlign:"left", fontWeight:700 }}>{t.tipo}</td>
+              <td style={td}>{t.ocorrencias.toLocaleString("pt-BR")}</td>
+              <td style={td}>{t.comentarios.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, fontWeight:700, color: t.bot ? "#ef4444" : td.color }}>{t.bot.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, textAlign:"left", minWidth:130 }}><b style={{ color:corPct(p) }}>{fmtPct(p)}</b><div style={{ height:6, borderRadius:99, background:"rgba(var(--ink),0.07)", marginTop:4 }}><div style={{ width:Math.min(100, p) + "%", height:"100%", borderRadius:99, background:corPct(p) }} /></div></td>
+              <td style={td}>{t.fechou_sem_texto.toLocaleString("pt-BR")} <span style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>({fmtPct(pctIA(t.fechou_sem_texto, t.fechou))})</span></td>
+            </tr>); })}</tbody>
+        </table></div>
       </Card>
 
       <Card style={{ marginBottom:16 }}>
@@ -6324,7 +6346,7 @@ function LogsOperadoresTab({ supabaseClient }) {
         Fonte: histórico (logs) das ocorrências na Segware, guardado a cada sincronização. "Operador Bot" = comentário com a marca "(Operador Bot)"/"(bot)" lançado no login do operador.
         GuardIA e Sistema ficam de fora (a GuardIA tem página própria). Logins da mesma pessoa aparecem juntos. Operadores com menos de 5 registros no período não aparecem na tabela.
       </div>
-      {opSel && <Portal><LogsOperadorModal op={opSel} periodo={periodo} filial={filial} supabaseClient={supabaseClient} onClose={() => setOpSel(null)} /></Portal>}
+      {opSel && <Portal><LogsOperadorModal op={opSel} periodo={periodo} filial={filial} tipo={tipoEv} supabaseClient={supabaseClient} onClose={() => setOpSel(null)} /></Portal>}
     </div>
   );
 }
