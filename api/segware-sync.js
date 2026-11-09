@@ -85,14 +85,15 @@ function categoriaEvento(o) {
   const d = semAcento(o.description);
   if (!d || /^REST|RESTAUR/.test(d)) return null;                       // restaurações não contam
   if (/^(ARMADO|ARME AUTOMATICO|DESARMADO|ARMOU|DESARMOU)\b/.test(d)) return "arme";
-  if (/CAMERA|\bCAM\b|GRAVACAO|PESSOA DETECTADA|DETECCAO DE MOVIMENTO/.test(d)) return null; // vídeo, não central
   if (/BATERIA/.test(d)) return "bateria";
-  if (/QUEDA DE ENERGIA|FALTA DE ENERGIA|SEM ENERGIA|FALHA (DE |NA |- )?(AC|ENERGIA|REDE ELETRICA)\b/.test(d)) return "energia";
-  if (/KEEP ?ALIVE|FALHA.{0,20}COMUNICA|SEM COMUNICA|PERDA.{0,15}COMUNICA|FALHA DE SUPERVISAO|FALHA.{0,12}TESTE|TESTE PERIODICO|AUTO ?-?TESTE NAO/.test(d)) return "comunicacao";
+  // alarme/disparo conta mesmo vindo de câmera (ex.: "ALARME CAMERA PORTÃO"), igual ao relatório de disparos da Segware
   if (/^(ALARME|DISPARO)\b/.test(d) && !/COACAO|PANICO/.test(d)) {
     // disparo que a central nem recebeu (CUC/monitoramento desabilitado) não conta
     return (o.logs || []).some(l => LOG_AUTOMATICO.test(l.text || "")) ? null : "disparos";
   }
+  if (/CAMERA|\bCAM\b|GRAVACAO|PESSOA DETECTADA|DETECCAO DE MOVIMENTO/.test(d)) return null; // falhas de vídeo não são da central
+  if (/QUEDA DE ENERGIA|FALTA DE ENERGIA|SEM ENERGIA|FALHA (DE |NA |- )?(AC|ENERGIA|REDE ELETRICA)\b/.test(d)) return "energia";
+  if (/KEEP ?ALIVE|FALHA.{0,20}COMUNICA|SEM COMUNICA|PERDA.{0,15}COMUNICA|FALHA DE SUPERVISAO|FALHA.{0,12}TESTE|TESTE PERIODICO|AUTO ?-?TESTE NAO/.test(d)) return "comunicacao";
   return null;
 }
 
