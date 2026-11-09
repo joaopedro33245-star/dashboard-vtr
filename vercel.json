@@ -2,10 +2,7 @@
   "rewrites": [
     { "source": "/config.js", "destination": "/api/config" }
   ],
-  "crons": [
-    {
-      "path": "/api/cron-segware",
-      "schedule": "0 0 * * *"
-    }
-  ]
+  "functions": {
+    "api/segware-sync.js": { "maxDuration": 60 }
+  }
 }
