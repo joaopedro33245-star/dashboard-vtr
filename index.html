@@ -5881,6 +5881,23 @@ function SaudeClienteTab({ clients, eventosSaude }) {
   // ── Top clientes por falha de comunicação — respeita o filtro de mês/período do topo ──
   const rankingComunicacao = useMemo(() => rankearPorPalavraChave(eventosMes, KEYWORDS_SAUDE.comunicacao, nomeMap), [eventosMes, nomeMap]);
 
+  // ── Disparos e queda de energia (mesma classificação da aba Análise de Eventos) ──
+  const rankingDisparos = useMemo(() => rankearPorPalavraChave(eventosMes, { test: ev => categoriaDoEvento(ev) === "disparos" }, nomeMap), [eventosMes, nomeMap]);
+  const rankingEnergia = useMemo(() => rankearPorPalavraChave(eventosMes, { test: ev => categoriaDoEvento(ev) === "energia" }, nomeMap), [eventosMes, nomeMap]);
+
+  // totais do período (todos os clientes, não só o top 15)
+  const totaisSaude = useMemo(() => {
+    const t = {};
+    for (const e of eventosMes) {
+      const c = categoriaDoEvento(e.evento); if (!c) continue;
+      const x = t[c] = t[c] || { total:0, clientes:new Set() };
+      x.total += (e.qtd || 1); x.clientes.add(e.codigo_cliente + "||" + e.filial);
+    }
+    return t;
+  }, [eventosMes]);
+  const totCat = c => (totaisSaude[c] && totaisSaude[c].total) || 0;
+  const cliCat = c => { const n = (totaisSaude[c] && totaisSaude[c].clientes.size) || 0; return n + " cliente" + (n===1?"":"s") + " afetado" + (n===1?"":"s"); };
+
   // ── Clientes sem armar há mais tempo — usa SEMPRE o histórico completo (ignora o filtro de
   // mês acima), porque essa lista é sobre "há quantos dias não vemos um evento de armar/desarmar
   // desse cliente", e restringir a um único mês quase sempre esvaziaria a lista ──
@@ -5909,19 +5926,35 @@ function SaudeClienteTab({ clients, eventosSaude }) {
 
   return (
     <div>
-      <MesFiltroBar value={mesFiltro} onChange={setMesFiltro} meses={mesesTodos} accent="#ef4444" label="Período (bateria e comunicação)" />
+      <MesFiltroBar value={mesFiltro} onChange={setMesFiltro} meses={mesesTodos} accent="#ef4444" label="Período (disparos, energia, bateria e comunicação)" />
 
-      <div className="grid-4" style={{ marginBottom:20 }}>
-        <KPICard label="Falhas de Bateria" value={rankingBateria.reduce((s,c)=>s+c.total,0)} sub={`${rankingBateria.length} cliente${rankingBateria.length===1?"":"s"} afetado${rankingBateria.length===1?"":"s"}`} icon="🔋" accent="#f59e0b" />
-        <KPICard label="Falhas de Comunicação" value={rankingComunicacao.reduce((s,c)=>s+c.total,0)} sub={`${rankingComunicacao.length} cliente${rankingComunicacao.length===1?"":"s"} afetado${rankingComunicacao.length===1?"":"s"}`} icon="📡" accent="#3b82f6" />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:16, marginBottom:20 }}>
+        <KPICard label="Disparos" value={totCat("disparos").toLocaleString("pt-BR")} sub={cliCat("disparos")} icon="🚨" accent="#ef4444" />
+        <KPICard label="Queda de Energia" value={totCat("energia").toLocaleString("pt-BR")} sub={cliCat("energia")} icon="⚡" accent="#f59e0b" />
+        <KPICard label="Falhas de Bateria" value={totCat("bateria").toLocaleString("pt-BR")} sub={cliCat("bateria")} icon="🔋" accent="#8b5cf6" />
+        <KPICard label="Falhas de Comunicação" value={totCat("comunicacao").toLocaleString("pt-BR")} sub={cliCat("comunicacao")} icon="📡" accent="#3b82f6" />
         <KPICard label="Sem Armar +7 dias" value={rankingSemArmar.filter(c=>c.diasSemArmar>=7).length} sub="clientes com risco de abandono" icon="🔓" accent="#ef4444" />
         <KPICard label="Sem Armar +30 dias" value={rankingSemArmar.filter(c=>c.diasSemArmar>=30).length} sub="atenção redobrada" icon="⚠️" accent="#f43f5e" />
       </div>
 
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))", gap:16, marginBottom:16 }}>
         <RankingSaudeCard
+          titulo="Top clientes — Disparos"
+          icone="🚨" accent="#ef4444"
+          itens={rankingDisparos}
+          metricaFn={c=>c.total}
+          subFn={c=>`${c.total} disparo${c.total===1?"":"s"}`}
+        />
+        <RankingSaudeCard
+          titulo="Top clientes — Queda de Energia"
+          icone="⚡" accent="#f59e0b"
+          itens={rankingEnergia}
+          metricaFn={c=>c.total}
+          subFn={c=>`${c.total} ocorrência${c.total===1?"":"s"}`}
+        />
+        <RankingSaudeCard
           titulo="Top clientes — Falha de Bateria"
-          icone="🔋" accent="#f59e0b"
+          icone="🔋" accent="#8b5cf6"
           itens={rankingBateria}
           metricaFn={c=>c.total}
           subFn={c=>`${c.total} ocorrência${c.total===1?"":"s"}`}
@@ -5945,13 +5978,10 @@ function SaudeClienteTab({ clients, eventosSaude }) {
       />
 
       <div style={{ marginTop:16, fontSize:11, color:"rgba(var(--ink),0.3)", lineHeight:1.6 }}>
-        * Essas listas vêm da tabela separada "eventos_saude" (Relatório de eventos da Segware), não de
-        "dispatches" — por isso não afetam o custo operacional nem o financeiro das outras abas. Bateria conta
-        quem tem "bateria" na descrição do evento, comunicação conta "comunica…" ou "keep alive", e o ranking de
-        "sem armar" olha a data do último evento de armar/desarmar de cada cliente (por isso ignora o filtro de
-        período acima — ele olha sempre o histórico completo). Se os textos de evento do seu sistema usarem
-        outras palavras, me avise para eu ajustar a classificação (ela está isolada em <code>KEYWORDS_SAUDE</code>,
-        no topo do arquivo).
+        * Dados vindos automaticamente da Segware (tabela "eventos_saude"), separados dos deslocamentos — não afetam
+        o custo operacional. Disparos contam só os que chegaram na central (sem pânico/coação); restaurações e eventos
+        de câmera não entram. O ranking de "sem armar" usa o último armado/desarmado de cada cliente e olha sempre o
+        histórico completo (ignora o filtro de período acima).
       </div>
     </div>
   );
@@ -5986,7 +6016,7 @@ const TAB_SUBTITLES={
   analise:"Comparação de bases semanais importadas",
   baseAtiva:"Base ativa de contas por semana",
   clientes:"Cadastro e situação financeira dos clientes",
-  saudeCliente:"Bateria, comunicação e clientes sem armar há muito tempo",
+  saudeCliente:"Disparos, queda de energia, bateria, comunicação e clientes sem armar",
   analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
   relatorios:"Exportação de dados para planilha",
   importacao:"Importação de planilhas e integração Segware",
