@@ -126,6 +126,7 @@
     @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
     @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
     .fade-up { animation: fadeUp 0.3s ease; }
+    @media (max-width: 1100px) { .grid-eventos { grid-template-columns: 1fr !important; } }
     .skeleton { background: linear-gradient(90deg, rgba(var(--ink),0.04) 25%, rgba(var(--ink),0.08) 50%, rgba(var(--ink),0.04) 75%); background-size: 400px 100%; animation: shimmer 1.4s infinite; border-radius: 8px; }
     @media print {
       body { background: #fff !important; color: #000 !important; }
@@ -244,7 +245,7 @@ const KEYWORDS_SAUDE = {
   // "comunica..." cobre o termo em português; "keep alive" cobre o evento
   // técnico "FALHA DE KEEP ALIVE" (perda do sinal de comunicação com a central)
   // que aparece no Relatório de Eventos da Segware com esse nome em inglês
-  comunicacao: /comunica|keep\s*alive/i,
+  comunicacao: /keep\s*alive|falha.{0,20}comunica|sem comunica|perda.{0,15}comunica/i,
   // cobre "armou", "armado", "armar", "arme", "desarmou", "desarme" etc,
   // sem confundir com a palavra "alarme" (o \b antes de "arm" não bate
   // dentro de "alarme", pois ali "arm" não começa numa borda de palavra)
@@ -5680,6 +5681,194 @@ function RankingSaudeCard({ titulo, icone, accent, itens, metricaFn, subFn, vazi
 // -- SAÚDE DO CLIENTE: fonte de dados própria (tabela "eventos_saude"), independente de
 // "dispatches" — por isso tem seu próprio filtro de mês local, em vez de usar o filtro
 // global do topo (que é calculado em cima dos meses de deslocamentos, não desses eventos). --
+// ── ANÁLISE DE EVENTOS: disparos, queda de energia, bateria baixa e falha de comunicação,
+// semana contra semana, com o top 15 de clientes e se aumentou ou diminuiu ──
+const CATEGORIAS_EVENTO = [
+  { key:"disparos",    label:"Disparos",             icone:"🚨", cor:"#ef4444", re:/^(ALARME|DISPARO)\b/, excluir:/COACAO|PANICO/ },
+  { key:"energia",     label:"Queda de energia",     icone:"⚡", cor:"#f59e0b", re:/QUEDA DE ENERGIA|FALTA DE ENERGIA|SEM ENERGIA|FALHA (DE |NA |- )?(AC|ENERGIA|REDE ELETRICA)\b/ },
+  { key:"bateria",     label:"Bateria baixa",        icone:"🔋", cor:"#8b5cf6", re:/BATERIA/ },
+  { key:"comunicacao", label:"Falha de comunicação", icone:"📡", cor:"#3b82f6", re:/KEEP\s*ALIVE|FALHA.{0,20}COMUNICA|SEM COMUNICA|PERDA.{0,15}COMUNICA|FALHA DE SUPERVISAO|FALHA.{0,12}TESTE|TESTE PERIODICO/ },
+];
+const normEvento = s => String(s||"").toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim();
+function categoriaDoEvento(ev){
+  const e = normEvento(ev);
+  for (const c of CATEGORIAS_EVENTO) if (c.re.test(e) && !(c.excluir && c.excluir.test(e))) return c.key;
+  return null;
+}
+
+function VariacaoTag({ atual, anterior, grande }) {
+  const d = atual - anterior;
+  const pct = anterior ? Math.round(d / anterior * 100) : null;
+  const cor = d > 0 ? "#ef4444" : d < 0 ? "#10b981" : "rgba(var(--ink),0.45)";
+  const seta = d > 0 ? "▲" : d < 0 ? "▼" : "=";
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4, color:cor, fontWeight:700, fontSize:grande?13:12, whiteSpace:"nowrap" }}>
+      {seta} {d > 0 ? "+" : ""}{d}{pct !== null && d !== 0 ? <span style={{ fontWeight:600, opacity:0.85 }}>({d>0?"+":""}{pct}%)</span> : null}
+    </span>
+  );
+}
+
+function AnaliseEventosTab({ clients, eventosSaude }) {
+  const [filial, setFilial] = useState("Todas");
+  const [cat, setCat] = useState("disparos");
+  const [semanaSel, setSemanaSel] = useState("");
+  const chartRef = useRef(null), chartInst = useRef(null);
+
+  const filiais = useMemo(() => ["Todas", ...Array.from(new Set(eventosSaude.map(e => e.filial).filter(Boolean))).sort()], [eventosSaude]);
+  const nomeMap = useMemo(() => { const m = {}; for (const c of clients) m[`${c.codigo_cliente}||${c.filial}`] = c.nome_cliente || c.codigo_cliente; return m; }, [clients]);
+
+  // classifica uma vez: { semana, cat, chave }
+  const base = useMemo(() => {
+    const out = [];
+    for (const e of eventosSaude) {
+      if (filial !== "Todas" && e.filial !== filial) continue;
+      const c = categoriaDoEvento(e.evento); if (!c) continue;
+      const dt = parseDataHora(e.data_hora); if (!dt) continue;
+      out.push({ semana:getWeekKey(dt), cat:c, chave:`${e.codigo_cliente}||${e.filial}`, codigo:e.codigo_cliente, filial:e.filial, nome:e.nome_cliente, dt });
+    }
+    return out;
+  }, [eventosSaude, filial]);
+
+  const semanas = useMemo(() => Array.from(new Set(base.map(r => r.semana))).sort().reverse(), [base]);
+  const ultimaData = useMemo(() => base.reduce((m, r) => r.dt > m ? r.dt : m, new Date(0)), [base]);
+  const fimDe = s => { const f = new Date(s + "T00:00:00"); f.setDate(f.getDate() + 6); return f; };
+  // padrão: última semana completa (a semana em andamento ainda não dá para comparar)
+  const semanaPadrao = semanas[0] && ultimaData < fimDe(semanas[0]) && semanas[1] ? semanas[1] : (semanas[0] || "");
+  const semana = semanas.includes(semanaSel) ? semanaSel : semanaPadrao;
+  const semanaAnt = semanas[semanas.indexOf(semana) + 1] || (semana ? (() => { const d = new Date(semana + "T00:00:00"); d.setDate(d.getDate() - 7); return getWeekKey(d); })() : "");
+  const parcial = semana && ultimaData < fimDe(semana);
+
+  // contagens por semana e categoria
+  const totais = useMemo(() => { const t = {}; for (const r of base) { const k = r.semana + "|" + r.cat; t[k] = (t[k] || 0) + 1; } return t; }, [base]);
+  const tot = (s, c) => totais[s + "|" + c] || 0;
+  const clientesAfetados = (s, c) => new Set(base.filter(r => r.semana === s && r.cat === c).map(r => r.chave)).size;
+
+  // top 15 da categoria escolhida
+  const ranking = useMemo(() => {
+    const m = {};
+    for (const r of base) {
+      if (r.cat !== cat || (r.semana !== semana && r.semana !== semanaAnt)) continue;
+      const x = m[r.chave] = m[r.chave] || { chave:r.chave, codigo:r.codigo, filial:r.filial, nome:nomeMap[r.chave] || r.nome || r.codigo, atual:0, anterior:0 };
+      if (r.semana === semana) x.atual++; else x.anterior++;
+    }
+    const lista = Object.values(m);
+    const posAnt = {}; lista.slice().sort((a, b) => b.anterior - a.anterior).filter(x => x.anterior > 0).forEach((x, i) => posAnt[x.chave] = i + 1);
+    const top = lista.filter(x => x.atual > 0).sort((a, b) => b.atual - a.atual || b.anterior - a.anterior).slice(0, 15).map(x => ({ ...x, posAnt: posAnt[x.chave] || null }));
+    const saiu = lista.filter(x => x.atual === 0 && x.anterior > 0).sort((a, b) => b.anterior - a.anterior).slice(0, 5);
+    return { top, saiu, pioraram: lista.filter(x => x.atual > x.anterior).length, melhoraram: lista.filter(x => x.atual < x.anterior).length, novos: lista.filter(x => x.atual > 0 && x.anterior === 0).length };
+  }, [base, cat, semana, semanaAnt, nomeMap]);
+
+  // gráfico: últimas 8 semanas, uma linha por categoria
+  const ultimas = useMemo(() => semanas.slice(0, 8).reverse(), [semanas]);
+  useEffect(() => {
+    if (!chartRef.current || !ultimas.length) return;
+    if (chartInst.current) chartInst.current.destroy();
+    chartInst.current = new Chart(chartRef.current, {
+      type:"line",
+      data:{ labels:ultimas.map(s => weekLabel(s).split(" – ")[0]), datasets:CATEGORIAS_EVENTO.map(c => ({ label:c.label, data:ultimas.map(s => tot(s, c.key)), borderColor:c.cor, backgroundColor:c.cor, tension:0.35, pointRadius:3, borderWidth:2 })) },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ position:"bottom", labels:{ color:"rgba(var(--ink),0.6)", usePointStyle:true, boxWidth:8, padding:14 } }, tooltip:{ backgroundColor:"var(--pop)", borderColor:"rgba(var(--ink),0.12)", borderWidth:1, titleColor:"var(--tx)", bodyColor:"rgba(var(--ink),0.75)", padding:10 } },
+        scales:{ x:{ ticks:{ color:"rgba(var(--ink),0.5)" }, grid:{ display:false } }, y:{ beginAtZero:true, ticks:{ color:"rgba(var(--ink),0.5)", precision:0 }, grid:{ color:"rgba(var(--ink),0.06)" } } } }
+    });
+    return () => { if (chartInst.current) chartInst.current.destroy(); };
+  }, [ultimas, totais]);
+
+  if (eventosSaude.length === 0) {
+    return <EmptyState icon="📊" title="Nenhum evento importado" sub='Importe o "Relatório de eventos" da Segware em Importação → Saúde do Cliente para ver os comparativos semanais.' />;
+  }
+  const catAtual = CATEGORIAS_EVENTO.find(c => c.key === cat);
+  const selStyle = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
+  const th = { padding:"10px 14px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)" };
+  const td = { padding:"10px 14px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)" };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end", gap:12, flexWrap:"wrap", marginBottom:18 }}>
+        <div>
+          <div style={{ fontSize:13, color:"rgba(var(--ink),0.55)" }}>Semana analisada</div>
+          <div style={{ fontSize:17, fontWeight:700 }}>{semana ? weekLabel(semana) : "—"}{parcial && <span style={{ fontSize:12, fontWeight:600, color:"#f59e0b", marginLeft:8 }}>semana em andamento</span>}</div>
+          <div style={{ fontSize:12, color:"rgba(var(--ink),0.5)" }}>comparada com {semanaAnt ? weekLabel(semanaAnt) : "—"}</div>
+        </div>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+          <select value={semana} onChange={e => setSemanaSel(e.target.value)} style={selStyle}>{semanas.map(s => <option key={s} value={s}>Semana {weekLabel(s)}</option>)}</select>
+          <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+        </div>
+      </div>
+
+      {/* uma caixa por tipo de evento: total da semana e variação */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:14, marginBottom:18 }}>
+        {CATEGORIAS_EVENTO.map(c => {
+          const a = tot(semana, c.key), p = tot(semanaAnt, c.key), ativo = c.key === cat;
+          return (
+            <button key={c.key} onClick={() => setCat(c.key)} style={{ position:"relative", textAlign:"left", cursor:"pointer", borderRadius:12, border:ativo ? `2px solid ${c.cor}` : "1px solid var(--border)", background:"var(--card)", boxShadow:"var(--shadow)", padding:"16px 18px", color:"var(--tx)", overflow:"hidden" }}>
+              <span style={{ position:"absolute", left:0, top:0, bottom:0, width:4, background:c.cor }} />
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em", textTransform:"uppercase", color:"rgba(var(--ink),0.5)" }}>{c.label}</span>
+                <span style={{ fontSize:18 }}>{c.icone}</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"baseline", gap:10, marginTop:6 }}>
+                <span style={{ fontSize:26, fontWeight:800 }}>{a}</span>
+                <VariacaoTag atual={a} anterior={p} grande />
+              </div>
+              <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.5)", marginTop:2 }}>semana anterior: {p} · {clientesAfetados(semana, c.key)} cliente(s)</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,2fr) minmax(280px,1fr)", gap:16, marginBottom:16 }} className="grid-eventos">
+        <Card>
+          <div style={{ padding:"16px 20px 4px", display:"flex", justifyContent:"space-between", alignItems:"baseline", flexWrap:"wrap", gap:8 }}>
+            <div style={{ fontWeight:700, fontSize:15 }}>{catAtual.icone} Top 15 — {catAtual.label}</div>
+            <div style={{ fontSize:12, color:"rgba(var(--ink),0.55)" }}>
+              <span style={{ color:"#ef4444", fontWeight:700 }}>▲ {ranking.pioraram} aumentaram</span> · <span style={{ color:"#10b981", fontWeight:700 }}>▼ {ranking.melhoraram} diminuíram</span> · {ranking.novos} novo(s)
+            </div>
+          </div>
+          {ranking.top.length === 0 ? (
+            <div style={{ padding:"40px 20px", textAlign:"center", color:"rgba(var(--ink),0.4)", fontSize:13 }}>Nenhum evento de {catAtual.label.toLowerCase()} nesta semana.</div>
+          ) : (
+            <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse", marginTop:8 }}>
+              <thead><tr><th style={{ ...th, width:44 }}>#</th><th style={th}>Cliente</th><th style={{ ...th, textAlign:"right" }}>Esta semana</th><th style={{ ...th, textAlign:"right" }}>Anterior</th><th style={{ ...th, textAlign:"right" }}>Variação</th><th style={th}>Situação</th></tr></thead>
+              <tbody>{ranking.top.map((x, i) => {
+                const sit = x.anterior === 0 ? ["Novo no ranking", "#f59e0b"] : x.atual > x.anterior ? ["Aumentou", "#ef4444"] : x.atual < x.anterior ? ["Diminuiu", "#10b981"] : ["Igual", "rgba(var(--ink),0.45)"];
+                return (
+                  <tr key={x.chave}>
+                    <td style={{ ...td, fontWeight:800, color:i < 3 ? catAtual.cor : "rgba(var(--ink),0.4)" }}>{i + 1}º</td>
+                    <td style={td}><div style={{ fontWeight:600 }}>{x.nome}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)", fontFamily:"monospace" }}>{x.codigo} · {x.filial}{x.posAnt ? ` · era ${x.posAnt}º` : ""}</div></td>
+                    <td style={{ ...td, textAlign:"right", fontWeight:800 }}>{x.atual}</td>
+                    <td style={{ ...td, textAlign:"right", color:"rgba(var(--ink),0.55)" }}>{x.anterior}</td>
+                    <td style={{ ...td, textAlign:"right" }}><VariacaoTag atual={x.atual} anterior={x.anterior} /></td>
+                    <td style={td}><span style={{ fontSize:11.5, fontWeight:700, color:sit[1], background:"rgba(var(--ink),0.04)", border:"1px solid var(--border)", borderRadius:999, padding:"2px 9px", whiteSpace:"nowrap" }}>{sit[0]}</span></td>
+                  </tr>
+                );
+              })}</tbody>
+            </table></div>
+          )}
+        </Card>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          <Card>
+            <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>Últimas 8 semanas</div>
+            <div style={{ position:"relative", height:240, padding:"0 14px 14px" }}><canvas ref={chartRef} /></div>
+          </Card>
+          <Card>
+            <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>✅ Saíram da lista</div>
+            <div style={{ padding:"0 20px 14px", fontSize:12, color:"rgba(var(--ink),0.5)" }}>Tinham {catAtual.label.toLowerCase()} na semana anterior e zeraram nesta</div>
+            {ranking.saiu.length === 0 ? <div style={{ padding:"0 20px 18px", fontSize:13, color:"rgba(var(--ink),0.4)" }}>Nenhum cliente.</div> :
+              ranking.saiu.map(x => (
+                <div key={x.chave} style={{ display:"flex", justifyContent:"space-between", gap:10, padding:"9px 20px", borderTop:"1px solid rgba(var(--ink),0.05)", fontSize:13 }}>
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{x.nome}</span>
+                  <span style={{ color:"#10b981", fontWeight:700, whiteSpace:"nowrap" }}>{x.anterior} → 0</span>
+                </div>
+              ))}
+          </Card>
+        </div>
+      </div>
+      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Relatório de eventos importado (Importação → Saúde do Cliente). Semanas de segunda a domingo.</div>
+    </div>
+  );
+}
+
 function SaudeClienteTab({ clients, eventosSaude }) {
   const [mesFiltro, setMesFiltro] = useState("Todos");
 
@@ -5809,6 +5998,7 @@ const TAB_TITLES={
   baseAtiva:"Base Ativa",
   clientes:"Clientes",
   saudeCliente:"Saúde do Cliente",
+  analiseEventos:"Análise de Eventos",
   relatorios:"Relatórios",
   importacao:"Importação",
   usuarios:"Usuários",
@@ -5824,6 +6014,7 @@ const TAB_SUBTITLES={
   baseAtiva:"Base ativa de contas por semana",
   clientes:"Cadastro e situação financeira dos clientes",
   saudeCliente:"Bateria, comunicação e clientes sem armar há muito tempo",
+  analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
   relatorios:"Exportação de dados para planilha",
   importacao:"Importação de planilhas e integração Segware",
   usuarios:"Gestão de usuários do sistema",
@@ -5844,6 +6035,7 @@ const SIDEBAR_NAV=[
   { groupKey:"clientesGrupo", groupLabel:"Clientes", groupIcon:"👥", items:[
     { key:"clientes", label:"Clientes", icon:"👥", accent:"#10b981", badgeKey:"clientsCount" },
     { key:"saudeCliente", label:"Saúde do Cliente", icon:"💚", accent:"#ef4444" },
+    { key:"analiseEventos", label:"Análise de Eventos", icon:"📊", accent:"#f59e0b" },
   ]},
   { standalone:true, key:"relatorios", label:"Relatórios", icon:"📋" },
   { groupKey:"admin", groupLabel:"Administração", groupIcon:"⚙️", adminOnly:true, items:[
@@ -6430,6 +6622,7 @@ function App() {
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
+      {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
         confirmLimparSaude={confirmLimparSaude} setConfirmLimparSaude={setConfirmLimparSaude} confirmTextSaude={confirmTextSaude} setConfirmTextSaude={setConfirmTextSaude} handleLimparEventosSaude={handleLimparEventosSaude}
