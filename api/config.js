@@ -5,7 +5,6 @@ module.exports = function handler(req, res) {
 
   const supabaseUrl  = process.env.SUPABASE_URL  || "";
   const supabaseAnon = process.env.SUPABASE_ANON || "";
-  const segwareToken = process.env.SEGWARE_TOKEN || "";
 
   if (!supabaseUrl || !supabaseAnon) {
     return res.status(500).json({ error: "Variaveis de ambiente nao configuradas no Vercel." });
@@ -17,7 +16,6 @@ module.exports = function handler(req, res) {
   res.status(200).send(
     "window._SUPABASE_URL  = " + JSON.stringify(supabaseUrl)  + ";\n" +
     "window._SUPABASE_ANON = " + JSON.stringify(supabaseAnon) + ";\n" +
-    "window._SEGWARE_TOKEN = " + JSON.stringify(segwareToken) + ";\n" +
     "window._configMissing = false;\n"
   );
 };
