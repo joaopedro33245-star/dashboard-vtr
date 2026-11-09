@@ -124,6 +124,12 @@ function paraOcorrencia(o, filial, codigo, nome) {
     t_viatura: d2 && d4 ? Math.max(0, Math.round((Date.parse(dataISO(d4.date)) - Date.parse(dataISO(d2.date))) / 1000)) : null,
     comentarios,
     automatica: !assumiu,
+    // histórico completo (texto de cada comentário/ação), usado para auditoria dos operadores
+    logs: (o.logs || []).filter(l => !l.canceled && String(l.text || "").trim()).map(l => ({
+      t: dataISO(l.date || l.logDate || l.createdAt || l.dateTime || l.registerDate || null),
+      p: String(l.personName || "").trim() || null,
+      x: String(l.text || "").trim().slice(0, 2000),
+    })),
   };
 }
 
@@ -169,6 +175,7 @@ export default async function handler(req, res) {
     if (!r.ok) return res.status(502).json({ error: `Segware respondeu ${r.status}`, detalhe: (await r.text()).slice(0, 200) });
     const json = await r.json();
     const lista = Array.isArray(json) ? json : (json.content || json.data || []);
+    if (req.query.amostra) return res.status(200).json(lista.filter(o => (o.logs || []).length).slice(0, 3).map(o => o.logs));
     let ignorados = 0;
     const deslocamentos = [], eventos = [], ultimoArme = {}, ocorrencias = [];
     for (const o of lista) {
