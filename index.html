@@ -5933,6 +5933,32 @@ const pctIA = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
 const fmtPct = v => (Math.round(v * 10) / 10).toLocaleString("pt-BR") + "%";
 const diaBR = s => { const [y, m, d] = String(s).slice(0, 10).split("-"); return d + "/" + m; };
 
+function GuardiaLogCard({ periodo, filial, supabaseClient }) {
+  const [rows, setRows] = useState(null); const [erro, setErro] = useState(""); const [tipo, setTipo] = useState("Todos");
+  const [busca, setBusca] = useState(""); const [termo, setTermo] = useState("");
+  useEffect(() => {
+    const [a, b] = periodoGuardia(periodo); setRows(null); setErro("");
+    supabaseClient.rpc("segware_logs_busca", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_pessoas:["GuardIA"], p_texto: termo.trim() || null, p_so_bot:false, p_filial: filial === "Todas" ? null : filial, p_tipo: tipo === "Todos" ? null : tipo })
+      .then(({ data, error }) => { if (error) setErro(error.message); else setRows(data || []); });
+  }, [periodo, filial, tipo, termo, supabaseClient]);
+  const sel = { padding:"7px 12px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none" };
+  return (
+    <Card style={{ marginTop:16 }}>
+      <div style={{ padding:"16px 20px 10px", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <span style={{ fontWeight:700, fontSize:15, marginRight:6 }}>💬 Log da GuardIA <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· tudo o que ela escreveu nas ocorrências · clique para ver o histórico completo</span></span>
+        <select value={tipo} onChange={e => setTipo(e.target.value)} style={{ ...sel, cursor:"pointer" }}>{["Todos", ...TIPOS_EVENTO_LOG].map(t => <option key={t} value={t}>{t === "Todos" ? "Todos os eventos" : t}</option>)}</select>
+        <input value={busca} onChange={e => setBusca(e.target.value)} onKeyDown={e => e.key === "Enter" && setTermo(busca)} placeholder="🔍 Buscar no texto (Enter)…" style={{ ...sel, minWidth:220, flex:1 }} />
+        {rows && rows.length > 0 && <button onClick={() => exportarLogsXlsx(rows, "log_guardia.xlsx")} style={{ ...sel, fontWeight:600, cursor:"pointer" }}>⬇ Excel ({rows.length})</button>}
+      </div>
+      {erro && <div style={{ padding:"0 20px 10px", color:"#ef4444", fontSize:13 }}>Erro: {erro}</div>}
+      <div style={{ padding:"0 8px 14px", maxHeight:520, overflowY:"auto" }}>
+        {!rows ? <div style={{ padding:12 }}>Carregando…</div> : rows.length === 0 ? <div style={{ padding:12 }}>Nenhum registro da GuardIA.</div> : <ListaLogs rows={rows} supabaseClient={supabaseClient} />}
+        {rows && rows.length >= 2000 && <div style={{ padding:"8px 12px", fontSize:12, color:"#f59e0b" }}>Mostrando os 2.000 mais recentes — reduza o período ou filtre o evento para ver o restante.</div>}
+      </div>
+    </Card>
+  );
+}
+
 function GuardiaTab({ supabaseClient }) {
   const [periodo, setPeriodo] = useState("tudo");
   const [filial, setFilial] = useState("Todas");
@@ -6118,6 +6144,7 @@ function GuardiaTab({ supabaseClient }) {
         "Repassou ao operador" = a IA assumiu e um operador (ou o apoio) fechou; "Fechada pelo sistema" = a ocorrência foi encerrada automaticamente (ex.: restauração) antes de alguém fechar.
         "% sozinha" é a taxa de autonomia — o principal indicador do desenvolvimento da IA. Tempos em mediana; "Total" = da chegada da ocorrência até o fechamento.
       </div>
+      <GuardiaLogCard periodo={periodo} filial={filial} supabaseClient={supabaseClient} />
     </div>
   );
 }
