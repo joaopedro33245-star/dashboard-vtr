@@ -5684,13 +5684,13 @@ function VariacaoTag({ atual, anterior, grande }) {
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
   { key:"hiseg",  label:"Condomínios Hiseg",  icone:"🏢", cor:"#a855f7" },
-  { key:"cond",   label:"Nossos condomínios", icone:"🏘️", cor:"#06b6d4" },
+  { key:"cond",   label:"Nossos condomínios (Portaria Inteligente)", icone:"🏘️", cor:"#06b6d4" },
   { key:"outros", label:"Demais clientes",    icone:"🏪", cor:"#64748b" },
 ];
 function grupoDoCliente(nome) {
   const n = normEvento(nome);
   if (/HISEG/.test(n)) return "hiseg";
-  if (/CONDOMINIO|\bCOND\b|EDIFICIO|\bEDF\b|\bED\.|RESIDENCIAL|PORTARIA INTELIGENTE/.test(n)) return "cond";
+  if (/PORTARIA INTELIGENTE/.test(n)) return "cond"; // nossos condomínios = Portaria Inteligente; demais condomínios são clientes normais
   return "outros";
 }
 
@@ -5879,7 +5879,7 @@ function AnaliseEventosTab({ clients, eventosSaude }) {
           </Card>
         </div>
       </div>
-      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = nomes com condomínio, edifício, residencial ou portaria inteligente.</div>
+      <div style={{ fontSize:11.5, color:"rgba(var(--ink),0.45)" }}>Fonte: Segware (sincronização automática). Semanas de segunda a domingo. Condomínios Hiseg = clientes com "Hiseg" no nome; nossos condomínios = clientes de Portaria Inteligente; condomínios sem Portaria Inteligente entram em "Demais clientes".</div>
     </div>
   );
 }
