@@ -5918,6 +5918,210 @@ function CentralTab({ supabaseClient }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// GuardIA — desempenho e evolução da IA da central (dados da Segware)
+// ═══════════════════════════════════════════════════════════════
+const PERIODOS_GUARDIA = [["tudo","Desde o início (26/10)"],["30d","Últimos 30 dias"],["7d","Últimos 7 dias"],["semana","Esta semana"],["semanaPassada","Semana passada"],["ontem","Ontem"],["hoje","Hoje"]];
+const periodoGuardia = p => p === "tudo" ? [new Date("2026-10-26T00:00:00-03:00"), new Date()] : periodoCentral(p);
+const DESFECHOS_IA = {
+  sozinha:  { label:"Resolveu sozinha", cor:"#10b981" },
+  repassou: { label:"Repassou ao operador", cor:"#f59e0b" },
+  sistema:  { label:"Fechada pelo sistema", cor:"#64748b" },
+  aberta:   { label:"Em aberto", cor:"#ef4444" },
+};
+const pctIA = (a, b) => b ? Math.round(a / b * 1000) / 10 : 0;
+const fmtPct = v => (Math.round(v * 10) / 10).toLocaleString("pt-BR") + "%";
+const diaBR = s => { const [y, m, d] = String(s).slice(0, 10).split("-"); return d + "/" + m; };
+
+function GuardiaTab({ supabaseClient }) {
+  const [periodo, setPeriodo] = useState("tudo");
+  const [filial, setFilial] = useState("Todas");
+  const [dados, setDados] = useState(null); const [erro, setErro] = useState(""); const [carregando, setCarregando] = useState(false);
+  const [filtroDesf, setFiltroDesf] = useState("todas");
+  const diaRef = useRef(null), diaInst = useRef(null), horaRef = useRef(null), horaInst = useRef(null);
+
+  const carregar = useCallback(() => {
+    const [a, b] = periodoGuardia(periodo);
+    setCarregando(true); setErro("");
+    supabaseClient.rpc("segware_guardia_resumo", { p_desde:a.toISOString(), p_ate:b.toISOString(), p_filial: filial === "Todas" ? null : filial })
+      .then(({ data, error }) => { setCarregando(false); if (error) setErro(error.message); else setDados(data); });
+  }, [periodo, filial, supabaseClient]);
+  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { if (periodo !== "hoje") return; const iv = setInterval(carregar, 120000); return () => clearInterval(iv); }, [periodo, carregar]);
+
+  const k = (dados && dados.kpi) || {};
+  const dias = (dados && dados.dias) || [];
+  const horas = (dados && dados.horas) || [];
+  const semanas = (dados && dados.semanas) || [];
+  const tipos = (dados && dados.tipos) || [];
+  const clientes = (dados && dados.clientes) || [];
+  const recentes = (dados && dados.recentes) || [];
+  const repasses = useMemo(() => agruparOperadores(((dados && dados.repasses) || []).map(r => ({ nome:r.nome, assumiu:0, fechou:r.qtd, comentarios:0, med_atender:null, med_atendimento:r.med_atendimento })))
+    .sort((a, b) => b.fechou - a.fechou).slice(0, 12), [dados]);
+
+  const corTexto = "rgba(" + getComputedStyle(document.documentElement).getPropertyValue("--ink").trim() + ",0.55)";
+  useEffect(() => {
+    if (!diaRef.current) return;
+    if (diaInst.current) diaInst.current.destroy();
+    diaInst.current = new Chart(diaRef.current, {
+      data:{ labels:dias.map(d => diaBR(d.dia)), datasets:[
+        { type:"bar", label:"Resolveu sozinha", data:dias.map(d => d.sozinha), backgroundColor:"rgba(16,185,129,0.8)", stack:"s", yAxisID:"y", borderRadius:3 },
+        { type:"bar", label:"Repassou ao operador", data:dias.map(d => d.repassou), backgroundColor:"rgba(245,158,11,0.7)", stack:"s", yAxisID:"y", borderRadius:3 },
+        { type:"bar", label:"Fechada pelo sistema", data:dias.map(d => d.sistema), backgroundColor:"rgba(100,116,139,0.45)", stack:"s", yAxisID:"y", borderRadius:3 },
+        { type:"line", label:"% resolvida sozinha", data:dias.map(d => pctIA(d.sozinha, d.total)), borderColor:"#0ea5e9", backgroundColor:"#0ea5e9", tension:0.35, pointRadius:3, borderWidth:2.5, yAxisID:"y1" },
+      ] },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ position:"bottom", labels:{ color:corTexto, usePointStyle:true, boxWidth:8 } },
+          tooltip:{ callbacks:{ label:c => c.dataset.yAxisID === "y1" ? " " + c.dataset.label + ": " + fmtPct(c.raw) : " " + c.dataset.label + ": " + c.raw } } },
+        scales:{ x:{ stacked:true, ticks:{ color:corTexto }, grid:{ display:false } },
+          y:{ stacked:true, beginAtZero:true, ticks:{ color:corTexto, precision:0 }, grid:{ color:"rgba(128,128,128,0.12)" }, title:{ display:true, text:"ocorrências", color:corTexto } },
+          y1:{ beginAtZero:true, position:"right", ticks:{ color:"#0ea5e9", callback:v => v + "%" }, grid:{ display:false } } } }
+    });
+    return () => { if (diaInst.current) diaInst.current.destroy(); };
+  }, [dias]);
+  useEffect(() => {
+    if (!horaRef.current) return;
+    if (horaInst.current) horaInst.current.destroy();
+    const H = Array.from({ length:24 }, (_, h) => horas.find(x => x.hora === h) || { hora:h, total:0, sozinha:0 });
+    horaInst.current = new Chart(horaRef.current, {
+      type:"bar",
+      data:{ labels:H.map(x => String(x.hora).padStart(2, "0") + "h"), datasets:[
+        { label:"Resolveu sozinha", data:H.map(x => x.sozinha), backgroundColor:"rgba(16,185,129,0.8)", stack:"h", borderRadius:3 },
+        { label:"Demais", data:H.map(x => x.total - x.sozinha), backgroundColor:"rgba(14,165,233,0.35)", stack:"h", borderRadius:3 },
+      ] },
+      options:{ responsive:true, maintainAspectRatio:false, interaction:{ mode:"index", intersect:false },
+        plugins:{ legend:{ position:"bottom", labels:{ color:corTexto, usePointStyle:true, boxWidth:8 } } },
+        scales:{ x:{ stacked:true, ticks:{ color:corTexto, maxRotation:0, autoSkip:true }, grid:{ display:false } },
+          y:{ stacked:true, beginAtZero:true, ticks:{ color:corTexto, precision:0 }, grid:{ color:"rgba(128,128,128,0.12)" } } } }
+    });
+    return () => { if (horaInst.current) horaInst.current.destroy(); };
+  }, [horas]);
+
+  const filiais = ["Todas", ...(((dados && dados.filiais_disponiveis) || []).slice().sort())];
+  const autonomia = pctIA(k.sozinha || 0, k.total || 0);
+  const semFech = semanas.length > 1 ? semanas[semanas.length - 2] : null, semAtual = semanas.length ? semanas[semanas.length - 1] : null;
+  const recFilt = filtroDesf === "todas" ? recentes : recentes.filter(r => r.desfecho === filtroDesf);
+  const selStyle = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
+  const th = { padding:"10px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"right", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap" };
+  const td = { padding:"9px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)", textAlign:"right" };
+  const thL = { ...th, textAlign:"left" }, tdL = { ...td, textAlign:"left" };
+  const titulo = t => <div style={{ padding:"16px 20px 6px", fontWeight:700, fontSize:15 }}>{t}</div>;
+  const barra = (v, cor) => <div style={{ height:6, borderRadius:99, background:"rgba(var(--ink),0.07)", marginTop:4, minWidth:80 }}><div style={{ width:Math.min(100, v) + "%", height:"100%", borderRadius:99, background:cor }} /></div>;
+  const seta = (a, b) => { if (a == null || b == null) return null; const d = Math.round((a - b) * 10) / 10; if (!d) return <span style={{ color:"rgba(var(--ink),0.4)", fontSize:11 }}> =</span>; return <span style={{ color: d > 0 ? "#10b981" : "#ef4444", fontSize:11, fontWeight:700 }}> {d > 0 ? "▲" : "▼"} {Math.abs(d).toLocaleString("pt-BR")} p.p.</span>; };
+  const badge = d => { const c = DESFECHOS_IA[d] || { label:d, cor:"#64748b" }; return <span style={{ display:"inline-block", padding:"2px 9px", borderRadius:999, fontSize:11, fontWeight:700, color:c.cor, background:c.cor + "1a", border:"1px solid " + c.cor + "40", whiteSpace:"nowrap" }}>{c.label}</span>; };
+
+  return (
+    <div>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center", marginBottom:18 }}>
+        <select value={periodo} onChange={e => setPeriodo(e.target.value)} style={selStyle}>{PERIODOS_GUARDIA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <select value={filial} onChange={e => setFilial(e.target.value)} style={selStyle}>{filiais.map(f => <option key={f} value={f}>{f === "Todas" ? "Todas as filiais" : f}</option>)}</select>
+        <button onClick={carregar} style={{ ...selStyle, fontWeight:600 }}>{carregando ? "Atualizando…" : "↻ Atualizar"}</button>
+        {periodo === "hoje" && <span style={{ fontSize:12, color:"rgba(var(--ink),0.45)" }}>atualiza sozinho a cada 2 min</span>}
+      </div>
+      {erro && <div style={{ marginBottom:14, padding:"10px 14px", borderRadius:10, background:"rgba(239,68,68,0.08)", border:"1px solid rgba(239,68,68,0.25)", color:"#ef4444", fontSize:13 }}>Erro: {erro}</div>}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:14, marginBottom:18 }}>
+        <KPICard label="Ocorrências que assumiu" value={(k.total || 0).toLocaleString("pt-BR")} sub={k.tratadas_central ? fmtPct(pctIA(k.total, k.tratadas_central)) + " das tratadas na central (filiais onde atua)" : "—"} icon="🤖" accent="#0ea5e9" />
+        <KPICard label="Resolveu sozinha" value={(k.sozinha || 0).toLocaleString("pt-BR")} sub={fmtPct(autonomia) + " do que assumiu · em " + fmtDur(k.mediana_sozinha) + " (mediana)"} icon="✅" accent="#10b981" />
+        <KPICard label="Repassou ao operador" value={(k.repassou || 0).toLocaleString("pt-BR")} sub={fmtPct(pctIA(k.repassou || 0, k.total || 0)) + " · operador fechou em " + fmtDur(k.mediana_repassou) + " (mediana)"} icon="🔁" accent="#f59e0b" />
+        <KPICard label="Fechadas pelo sistema" value={(k.sistema || 0).toLocaleString("pt-BR")} sub={fmtPct(pctIA(k.sistema || 0, k.total || 0)) + " (restauração antes de alguém fechar)" + (k.abertas ? " · " + k.abertas + " em aberto" : "")} icon="⚙️" accent="#64748b" />
+        <KPICard label="Tempo para assumir" value={fmtDur(k.mediana_assumir)} sub={"mediana · " + (k.comentarios || 0).toLocaleString("pt-BR") + " comentários da IA"} icon="⚡" accent="#8b5cf6" />
+      </div>
+
+      <Card style={{ marginBottom:16 }}>
+        {titulo("📈 Evolução dia a dia — o que a IA fez com cada ocorrência")}
+        <div style={{ position:"relative", height:300, padding:"0 14px 14px" }}><canvas ref={diaRef} /></div>
+      </Card>
+
+      <Card style={{ marginBottom:16 }}>
+        {titulo(<span>📅 Semana a semana {semAtual && semFech ? <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· autonomia {fmtPct(pctIA(semAtual.sozinha, semAtual.total))} nesta semana{seta(pctIA(semAtual.sozinha, semAtual.total), pctIA(semFech.sozinha, semFech.total))} contra a anterior</span> : null}</span>)}
+        <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead><tr><th style={thL}>Semana</th><th style={th}>Assumiu</th><th style={th}>Resolveu sozinha</th><th style={thL}>% sozinha</th><th style={th}>Repassou</th><th style={th}>Sistema</th><th style={th}>Tempo p/ assumir</th><th style={th}>Tempo p/ resolver</th></tr></thead>
+          <tbody>{semanas.length === 0 ? <tr><td style={tdL} colSpan={8}>{carregando ? "Carregando…" : "Sem dados no período."}</td></tr> : semanas.map((s, i) => {
+            const p = pctIA(s.sozinha, s.total), ant = i ? pctIA(semanas[i - 1].sozinha, semanas[i - 1].total) : null;
+            const ini = new Date(s.semana + "T12:00:00"), fim = new Date(ini); fim.setDate(fim.getDate() + 6);
+            return <tr key={s.semana}>
+              <td style={{ ...tdL, fontWeight:600, whiteSpace:"nowrap" }}>{diaBR(s.semana)} – {diaBR(fim.toISOString())}{i === semanas.length - 1 && periodo !== "semanaPassada" ? <span style={{ fontSize:11, color:"rgba(var(--ink),0.45)", fontWeight:500 }}> (em andamento)</span> : null}</td>
+              <td style={{ ...td, fontWeight:700 }}>{s.total.toLocaleString("pt-BR")}</td>
+              <td style={{ ...td, fontWeight:700, color:"#10b981" }}>{s.sozinha.toLocaleString("pt-BR")}</td>
+              <td style={tdL}><b>{fmtPct(p)}</b>{seta(p, ant)}{barra(p, "#10b981")}</td>
+              <td style={td}>{s.repassou.toLocaleString("pt-BR")}</td>
+              <td style={td}>{s.sistema.toLocaleString("pt-BR")}</td>
+              <td style={td}>{fmtDur(s.mediana_assumir)}</td>
+              <td style={td}>{fmtDur(s.mediana_sozinha)}</td>
+            </tr>;
+          })}</tbody>
+        </table></div>
+      </Card>
+
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,1fr)", gap:16, marginBottom:16 }} className="grid-eventos">
+        <Card>
+          {titulo(<span>🧩 Por tipo de ocorrência <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· onde a IA já resolve e onde ainda depende do operador</span></span>)}
+          <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr><th style={thL}>Tipo</th><th style={th}>Assumiu</th><th style={th}>Sozinha</th><th style={thL}>% sozinha</th><th style={th}>Repassou</th><th style={th}>Sistema</th></tr></thead>
+            <tbody>{tipos.map(t => { const p = pctIA(t.sozinha, t.total); return (
+              <tr key={t.tipo}><td style={{ ...tdL, fontWeight:600 }}>{t.tipo}</td><td style={{ ...td, fontWeight:700 }}>{t.total.toLocaleString("pt-BR")}</td><td style={{ ...td, color:"#10b981", fontWeight:700 }}>{t.sozinha}</td>
+                <td style={tdL}>{fmtPct(p)}{barra(p, p >= 15 ? "#10b981" : p > 0 ? "#f59e0b" : "#ef4444")}</td><td style={td}>{t.repassou}</td><td style={td}>{t.sistema}</td></tr>); })}</tbody>
+          </table></div>
+        </Card>
+        <Card>
+          {titulo(<span>🔁 Para quem a IA repassa <span style={{ fontWeight:500, fontSize:12, color:"rgba(var(--ink),0.5)" }}>· quem fechou</span></span>)}
+          <div className="table-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr><th style={thL}>Operador</th><th style={th}>Fechou</th><th style={th}>Tempo médio até fechar</th></tr></thead>
+            <tbody>{repasses.map(o => (
+              <tr key={o.nome}><td style={tdL}><span style={{ fontWeight:600 }}>{o.nome}</span>{o.nomes.length > 1 ? <span title={o.nomes.join("\n")} style={{ fontSize:11, color:"rgba(var(--ink),0.5)", marginLeft:6 }}>({o.nomes.length} logins)</span> : null}{o.tipo === "apoio" ? <span style={{ fontSize:11, color:"rgba(var(--ink),0.5)", marginLeft:6 }}>· apoio</span> : null}</td>
+                <td style={{ ...td, fontWeight:700 }}>{o.fechou.toLocaleString("pt-BR")}</td><td style={td}>{fmtDur(o.med_atendimento)}</td></tr>))}</tbody>
+          </table></div>
+        </Card>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"minmax(0,1.2fr) minmax(280px,1fr)", gap:16, marginBottom:16 }} className="grid-eventos">
+        <Card>
+          {titulo("🕐 Por hora do dia")}
+          <div style={{ position:"relative", height:260, padding:"0 14px 14px" }}><canvas ref={horaRef} /></div>
+        </Card>
+        <Card>
+          {titulo("🏠 Clientes que mais caíram na IA")}
+          <div className="table-scroll" style={{ maxHeight:270, overflowY:"auto" }}><table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr><th style={thL}>Cliente</th><th style={th}>Total</th><th style={th}>Sozinha</th><th style={th}>Repassou</th></tr></thead>
+            <tbody>{clientes.map(c => (
+              <tr key={c.codigo_cliente + c.filial}><td style={tdL}><div style={{ fontWeight:600, maxWidth:260, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={c.nome_cliente}>{c.nome_cliente}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>conta {c.codigo_cliente} · {c.filial}</div></td>
+                <td style={{ ...td, fontWeight:700 }}>{c.total}</td><td style={{ ...td, color:"#10b981" }}>{c.sozinha}</td><td style={td}>{c.repassou}</td></tr>))}</tbody>
+          </table></div>
+        </Card>
+      </div>
+
+      <Card>
+        <div style={{ padding:"16px 20px 6px", display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontWeight:700, fontSize:15, marginRight:6 }}>🧾 Últimas ocorrências da IA</span>
+          {[["todas", "Todas", "#0ea5e9"], ...Object.entries(DESFECHOS_IA).map(([kk, v]) => [kk, v.label, v.cor])].map(([kk, l, cor]) => (
+            <button key={kk} onClick={() => setFiltroDesf(kk)} style={{ padding:"5px 12px", borderRadius:999, border:"1px solid " + (filtroDesf === kk ? cor : "var(--border)"), background: filtroDesf === kk ? cor + "1f" : "var(--card)", color:"var(--tx)", fontSize:12, fontWeight:700, cursor:"pointer" }}>{l}</button>))}
+          <span style={{ fontSize:12, color:"rgba(var(--ink),0.45)" }}>{recFilt.length} de {recentes.length} mais recentes</span>
+        </div>
+        <div className="table-scroll" style={{ maxHeight:460, overflowY:"auto" }}><table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead><tr><th style={thL}>Chegou</th><th style={thL}>Cliente</th><th style={thL}>Evento</th><th style={thL}>O que a IA fez</th><th style={thL}>Fechou</th><th style={th}>Assumiu em</th><th style={th}>Total</th><th style={th}>Coment. IA</th></tr></thead>
+          <tbody>{recFilt.length === 0 ? <tr><td style={tdL} colSpan={8}>{carregando ? "Carregando…" : "Nenhuma ocorrência."}</td></tr> : recFilt.map(r => (
+            <tr key={r.recebida + r.codigo_cliente}>
+              <td style={{ ...tdL, whiteSpace:"nowrap" }}>{new Date(r.recebida).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</td>
+              <td style={tdL}><div style={{ fontWeight:600, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.nome_cliente}>{r.nome_cliente}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>conta {r.codigo_cliente}</div></td>
+              <td style={tdL}><div style={{ maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.descricao}>{r.descricao}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>{r.tipo}{r.teve_desl ? " · 🚓 deslocamento" : ""}</div></td>
+              <td style={tdL}>{badge(r.desfecho)}</td>
+              <td style={{ ...tdL, fontSize:12 }}>{r.fechada_por || "—"}</td>
+              <td style={td}>{fmtDur(r.t_ate_atender)}</td>
+              <td style={td}>{fmtDur(r.t_atendimento)}</td>
+              <td style={td}>{r.coment_ia}</td>
+            </tr>))}</tbody>
+        </table></div>
+      </Card>
+      <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
+        Fonte: Segware (sincronização automática, dados desde 26/10). Conta as ocorrências que a GuardIA assumiu ou fechou. "Resolveu sozinha" = a própria GuardIA fechou;
+        "Repassou ao operador" = a IA assumiu e um operador (ou o apoio) fechou; "Fechada pelo sistema" = a ocorrência foi encerrada automaticamente (ex.: restauração) antes de alguém fechar.
+        "% sozinha" é a taxa de autonomia — o principal indicador do desenvolvimento da IA. Tempos em mediana; "Total" = da chegada da ocorrência até o fechamento.
+      </div>
+    </div>
+  );
+}
+
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
   { key:"hiseg",  label:"Hiseg Ceará",  icone:"🏢", cor:"#a855f7" },
@@ -6512,6 +6716,7 @@ const TAB_TITLES={
   saudeCliente:"Saúde do Cliente",
   analiseEventos:"Análise de Eventos",
   central:"Central",
+  guardia:"GuardIA",
   relatorios:"Relatórios",
   importacao:"Importação",
   usuarios:"Usuários",
@@ -6529,6 +6734,7 @@ const TAB_SUBTITLES={
   saudeCliente:"Disparos, queda de energia, bateria, comunicação e clientes sem armar",
   analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
   central:"Tempo de atendimento, ocorrências e desempenho dos operadores",
+  guardia:"Desempenho e evolução da IA (GuardIA) na central",
   relatorios:"Exportação de dados para planilha",
   importacao:"Importação de planilhas e integração Segware",
   usuarios:"Gestão de usuários do sistema",
@@ -6537,6 +6743,7 @@ const SIDEBAR_NAV=[
   { standalone:true, key:"dashboard", label:"Dashboard", icon:"📊" },
   { groupKey:"operacao", groupLabel:"Operação", groupIcon:"🚦", items:[
     { key:"central", label:"Central", icon:"🎧", accent:"#0ea5e9" },
+    { key:"guardia", label:"GuardIA", icon:"🤖", accent:"#14b8a6" },
     { key:"analiseDeslocamento", label:"Deslocamentos", icon:"🚦", accent:"#6366f1" },
     { key:"portaria", label:"Portaria Inteligente", icon:"🏢", accent:"#8b5cf6", badgeKey:"piCount" },
     { key:"filiais", label:"Filiais", icon:"🏢", accent:"#06b6d4" },
@@ -7144,6 +7351,7 @@ function App() {
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
       {aba==="central"&&<CentralTab supabaseClient={supabaseClient} />}
+      {aba==="guardia"&&<GuardiaTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
