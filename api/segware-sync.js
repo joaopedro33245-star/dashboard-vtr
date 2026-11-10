@@ -157,6 +157,18 @@ export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).json({ error: "Método não permitido" });
   if (!(await autorizado(req))) return res.status(401).json({ error: "Sessão inválida — faça login no dashboard" });
 
+  // consulta de leitura em outros endpoints da Segware (ex.: cadastro de contas), só para usuário logado
+  if (req.query.explorar) {
+    const caminho = String(req.query.explorar);
+    if (!/^\/(v\d|api|swagger|docs)[A-Za-z0-9\/_\-?=&.%,:]*$/.test(caminho)) return res.status(400).json({ error: "caminho inválido" });
+    const tk = (process.env.SEGWARE_TOKEN || "").replace(/[\r\n\t]+/g, "").trim();
+    try {
+      const r = await fetch("https://api.segware.com.br" + caminho, { headers: { Authorization: tk.startsWith("Bearer ") ? tk : "Bearer " + tk, Accept: "application/json" } });
+      const t = await r.text();
+      return res.status(200).json({ status: r.status, tipo: r.headers.get("content-type"), corpo: t.slice(0, 200000) });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
   const { startDate, endDate } = req.query;
   const ini = new Date(startDate), fim = new Date(endDate);
   if (isNaN(ini) || isNaN(fim) || fim <= ini) return res.status(400).json({ error: "startDate/endDate inválidos" });
