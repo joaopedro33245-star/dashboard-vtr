@@ -6378,6 +6378,207 @@ function LogsOperadoresTab({ supabaseClient }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Conferir lista — sobe uma lista de clientes (CSV do SIM, planilha ou colado) e confere na Segware
+// se o monitoramento está habilitado, quando chegou o último evento e se o nome bate
+// ═══════════════════════════════════════════════════════════════
+const EMPRESAS_SEGWARE = { 3244:"SERVIS CEARÁ", 3247:"SECOPI PIAUÍ", 3249:"SERVIS MARANHÃO", 3251:"SERVIS AMAZONAS", 6699:"Maver Monitoramento", 3246:"1 P3 SOLUCOES", 7127:"2 PROGUARD", 10635:"4 PRIORIDADE", 8021:"OVERTEC", 11339:"EMPRESA SEGWARE 11339", 12403:"HISEG BAHIA" };
+const STOP_CONF = new Set(["CLIENTE","COM","CFTV","LTDA","DE","DA","DO","DOS","DAS","ME","VTR","NAO","COBRE","CLEINTE","CLINTE","CLIETNE","SEGURO","VER","NOTAS","DVR","COMERCIO","EIRELI","EPP"]);
+const normConf = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+const tokConf = s => new Set(normConf(s).split(/[^A-Z0-9]+/).filter(w => w.length >= 3 && !STOP_CONF.has(w)));
+const codigoConta = s => { let c = String(s || "").trim().toUpperCase(); if (/^\d{1,3}$/.test(c)) c = c.padStart(4, "0"); return /^[0-9A-F]{3,6}$/.test(c) ? c : null; };
+
+function parseCsvTexto(txt) {
+  const linha1 = txt.split(/\r?\n/)[0] || "";
+  const sep = [";", "\t", ","].map(s => [s, linha1.split(s).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cel = "", q = false;
+  for (let i = 0; i < txt.length; i++) {
+    const ch = txt[i];
+    if (q) { if (ch === '"') { if (txt[i + 1] === '"') { cel += '"'; i++; } else q = false; } else cel += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === sep) { row.push(cel); cel = ""; }
+    else if (ch === "\n" || ch === "\r") { if (ch === "\r" && txt[i + 1] === "\n") i++; row.push(cel); rows.push(row); row = []; cel = ""; }
+    else cel += ch;
+  }
+  if (cel || row.length) { row.push(cel); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim()));
+}
+// transforma as linhas da planilha em [{codigo, nome, canais}]
+function extrairClientes(rows) {
+  if (!rows.length) return [];
+  const cab = rows[0].map(c => normConf(c).trim());
+  const rx = /^\s*([0-9A-Fa-f]{4})\s*-\s*(.+?)\s*$/;
+  const iNome = cab.findIndex(c => c === "NOME"), iDir = cab.findIndex(c => /DIRETORIO DE GRAVACAO/.test(c));
+  const mapa = new Map();
+  const add = (cod, nome, canal) => { const c = codigoConta(cod); if (!c) return; const x = mapa.get(c) || { codigo:c, nome:"", canais:0 }; if (!x.nome && nome) x.nome = nome; if (canal) x.canais++; mapa.set(c, x); };
+  if (iNome >= 0 && iDir >= 0) { // exportação de câmeras do servidor SIM (Sigma Image)
+    for (const r of rows.slice(1)) {
+      const segs = String(r[iDir] || "").split("\\"), seg = segs.find(s => rx.test(s));
+      const m = rx.exec(r[iNome] || "") || (seg ? rx.exec(seg) : null);
+      if (!m) continue;
+      let nome = seg && rx.exec(seg)[1].toUpperCase() === m[1].toUpperCase() ? rx.exec(seg)[2] : m[2];
+      nome = nome.replace(/^\d{1,2}\s*-\s*/, "").replace(/\s+\d{1,3}(\s*-.*)?$/, "").trim();
+      add(m[1], nome, true);
+    }
+    return [...mapa.values()];
+  }
+  const ehCab = c => c.length < 30 && !/^[0-9A-F]{3,5}\b/.test(c);
+  let iCod = cab.findIndex(c => ehCab(c) && /^(CONTA|CODIGO|COD\b|ACCOUNT|N[O°º]? ?CONTA)/.test(c));
+  let iN = cab.findIndex((c, i) => i !== iCod && ehCab(c) && /^(NOME|CLIENTE|FANTASIA|RAZAO)/.test(c));
+  const temCab = iCod >= 0;
+  for (const r of rows.slice(temCab ? 1 : 0)) {
+    if (temCab) { add(r[iCod], iN >= 0 ? String(r[iN] || "").trim() : "", false); continue; }
+    const m = rx.exec(r.join(" - ")) || /^\s*([0-9A-Fa-f]{3,5})\s*[-;,:\s]\s*(.*)$/.exec(r.join(" "));
+    if (m) add(m[1], String(m[2] || "").trim(), false); else add(r[0], r[1] || "", false);
+  }
+  return [...mapa.values()];
+}
+function avaliarConta(cli, contas, empresa) {
+  const nossas = contas.filter(x => EMPRESAS_SEGWARE[x.companyId] && (!empresa || String(x.companyId) === empresa));
+  const tk = tokConf(cli.nome);
+  const sc = nossas.map(x => {
+    const t = tokConf((x.tradeName || "") + " " + (x.corporateName || ""));
+    let s = 0, exato = false;
+    for (const w of tk) { if (t.has(w)) { s += 2; exato = true; } else if (w.length >= 5 && [...t].some(u => u.length >= 5 && u.slice(0, 5) === w.slice(0, 5))) { s += 1; exato = true; } }
+    if (/CFTV/i.test(x.tradeName || "")) s += 0.5;
+    if ((x.lastEventReceptionDate || "") >= new Date(Date.now() - 60 * 864e5).toISOString()) s += 0.3;
+    return { x, s, exato };
+  }).sort((a, b) => b.s - a.s);
+  const b = sc[0];
+  if (!b) return { ...cli, filial:"", nomeSigma:"", monitoramento:"NÃO ENCONTRADO", ultimo:null, dias:null, situacao:"⚪ Conta não encontrada nas nossas empresas", conferencia:"—", outras:contas };
+  const ult = b.x.lastEventReceptionDate ? new Date(String(b.x.lastEventReceptionDate).replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) : null;
+  const dias = ult ? Math.floor((Date.now() - ult) / 864e5) : null;
+  const hab = !!b.x.enabled;
+  const situacao = !hab ? "🔴 Monitoramento DESABILITADO" + (dias !== null && dias <= 2 ? " — ainda envia eventos" : "")
+    : dias === null || dias > 7 ? "🟡 Habilitado, sem eventos há " + (dias === null ? "muito tempo" : dias + " dias") : "🟢 Habilitado e recebendo";
+  return { ...cli, filial:EMPRESAS_SEGWARE[b.x.companyId], nomeSigma:String(b.x.tradeName || "").trim(), monitoramento: hab ? "HABILITADO" : "DESABILITADO",
+    ultimo:ult, dias, situacao, conferencia: b.exato ? "Nome confere" : "Conferir (nome diferente)", cidade:b.x.address && b.x.address.cityDescription,
+    obs:String(b.x.localObservations || b.x.placeObservation || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300), outras:contas.filter(x => x !== b.x) };
+}
+
+function ConferenciaTab({ supabaseClient }) {
+  const [clientes, setClientes] = useState([]); const [origem, setOrigem] = useState("");
+  const [texto, setTexto] = useState(""); const [empresa, setEmpresa] = useState("");
+  const [res, setRes] = useState([]); const [prog, setProg] = useState(null); const [erro, setErro] = useState("");
+  const [filtro, setFiltro] = useState("todos"); const [aberta, setAberta] = useState(null);
+  const parar = useRef(false);
+
+  const lerArquivo = async f => {
+    setErro(""); setRes([]);
+    try {
+      let rows;
+      if (/\.xlsx?$/i.test(f.name)) { const wb = XLSX.read(await f.arrayBuffer(), { type:"array" }); rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:"" }); }
+      else { const buf = await f.arrayBuffer(); let t = new TextDecoder("utf-8").decode(buf); if (t.includes("\uFFFD")) t = new TextDecoder("windows-1252").decode(buf); rows = parseCsvTexto(t.replace(/^\uFEFF/, "")); }
+      const c = extrairClientes(rows);
+      if (!c.length) { setErro("Não encontrei códigos de conta no arquivo. Use uma coluna \"Conta\"/\"Código\" ou o formato \"1234 - NOME\"."); return; }
+      setClientes(c); setOrigem(f.name + " · " + c.length + " clientes" + (c.some(x => x.canais) ? " · " + c.reduce((n, x) => n + x.canais, 0) + " canais" : ""));
+    } catch (e) { setErro("Não consegui ler o arquivo: " + e.message); }
+  };
+  const usarTexto = () => { const c = extrairClientes(texto.split(/\r?\n/).filter(l => l.trim()).map(l => [l])); setClientes(c); setRes([]); setOrigem("lista colada · " + c.length + " clientes"); if (!c.length) setErro("Não encontrei códigos. Use uma conta por linha, ex.: 9429 - EVANGELISTA TORQUATO"); else setErro(""); };
+
+  const conferir = async () => {
+    parar.current = false; setRes([]); setErro(""); setAberta(null);
+    const fila = clientes.slice(), out = [], tot = fila.length; setProg({ feitos:0, tot });
+    const { data } = await supabaseClient.auth.getSession(); let tok = data && data.session && data.session.access_token;
+    const um = async cli => {
+      for (let t = 0; t < 3; t++) {
+        try {
+          if (t) { const s = await supabaseClient.auth.getSession(); tok = s.data.session.access_token; }
+          const r = await fetch("/api/segware-sync?explorar=" + encodeURIComponent("/v2/accounts?accountCode=" + cli.codigo), { headers:{ authorization:"Bearer " + tok } });
+          const j = await r.json(); if (j.status !== 200) throw new Error(j.error || ("Segware " + j.status));
+          return avaliarConta(cli, JSON.parse(j.corpo || "[]"), empresa);
+        } catch (e) { if (t === 2) return { ...cli, filial:"", nomeSigma:"", monitoramento:"ERRO", situacao:"⚠️ Erro na consulta: " + e.message, conferencia:"—", outras:[] }; await new Promise(r => setTimeout(r, 1500)); }
+      }
+    };
+    await Promise.all([0, 1, 2, 3].map(async () => { while (fila.length && !parar.current) { const r = await um(fila.shift()); out.push(r); setProg({ feitos:out.length, tot }); setRes(out.slice()); } }));
+    setProg(null);
+  };
+  const ordemSit = s => s.startsWith("🔴") ? 0 : s.startsWith("🟡") ? 1 : s.startsWith("⚪") || s.startsWith("⚠️") ? 2 : 3;
+  const lista = useMemo(() => res.filter(r => filtro === "todos" || (filtro === "conferir" ? r.conferencia.startsWith("Conferir") : r.situacao.startsWith(filtro)))
+    .sort((a, b) => ordemSit(a.situacao) - ordemSit(b.situacao) || String(a.filial).localeCompare(String(b.filial)) || a.codigo.localeCompare(b.codigo)), [res, filtro]);
+  const cont = k => res.filter(r => k === "conferir" ? r.conferencia.startsWith("Conferir") : r.situacao.startsWith(k)).length;
+  const exportar = () => {
+    const linhas = lista.map(r => ({ "Conta":r.codigo, "Cliente (lista)":r.nome, ...(r.canais ? { "Canais":r.canais } : {}), "Filial (Segware)":r.filial, "Nome no Sigma":r.nomeSigma,
+      "Monitoramento":r.monitoramento, "Último evento":r.ultimo ? r.ultimo.toLocaleString("pt-BR") : "", "Dias sem evento":r.dias ?? "", "Situação":r.situacao.replace(/^\S+\s/, ""), "Conferência do nome":r.conferencia, "Cidade":r.cidade || "", "Observação no Sigma":r.obs || "" }));
+    const ws = XLSX.utils.json_to_sheet(linhas); ws["!cols"] = [8, 38, 8, 18, 48, 15, 18, 10, 40, 26, 18, 60].map(w => ({ wch:w }));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Conferência"); XLSX.writeFile(wb, "conferencia_monitoramento.xlsx");
+  };
+  const sel = { padding:"9px 14px", borderRadius:10, border:"1px solid var(--border)", background:"var(--card)", color:"var(--tx)", fontSize:13, outline:"none", cursor:"pointer" };
+  const th = { padding:"10px 12px", fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.05em", color:"rgba(var(--ink),0.5)", textAlign:"left", borderBottom:"1px solid var(--border)", whiteSpace:"nowrap", position:"sticky", top:0, background:"var(--card)" };
+  const td = { padding:"9px 12px", fontSize:13, borderBottom:"1px solid rgba(var(--ink),0.05)", textAlign:"left", verticalAlign:"top" };
+  const corSit = s => s.startsWith("🔴") ? "rgba(239,68,68,0.07)" : s.startsWith("🟡") ? "rgba(245,158,11,0.07)" : "transparent";
+  const temCanais = clientes.some(c => c.canais);
+
+  return (
+    <div>
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ padding:"16px 20px", display:"grid", gridTemplateColumns:"minmax(260px,1fr) minmax(260px,1fr)", gap:18 }} className="grid-eventos">
+          <div>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>📁 1. Suba a lista</div>
+            <div style={{ fontSize:12.5, color:"rgba(var(--ink),0.55)", marginBottom:10, lineHeight:1.5 }}>CSV exportado do servidor SIM (câmeras), planilha Excel com coluna <b>Conta</b>/<b>Código</b> e <b>Nome</b>, ou cole ao lado uma conta por linha.</div>
+            <label style={{ ...sel, display:"inline-block", fontWeight:700 }}>Escolher arquivo<input type="file" accept=".csv,.txt,.xlsx,.xls" style={{ display:"none" }} onChange={e => e.target.files[0] && lerArquivo(e.target.files[0])} /></label>
+            {origem && <div style={{ marginTop:10, fontSize:13, fontWeight:600 }}>✅ {origem}</div>}
+          </div>
+          <div>
+            <div style={{ fontWeight:700, fontSize:15, marginBottom:6 }}>…ou cole a lista</div>
+            <textarea value={texto} onChange={e => setTexto(e.target.value)} placeholder={"9429 - EVANGELISTA TORQUATO\n0014 - LOTERIA 13 PONTOS\n3859"} rows={4} style={{ ...sel, width:"100%", cursor:"text", fontFamily:"inherit", resize:"vertical" }} />
+            <button onClick={usarTexto} style={{ ...sel, marginTop:6, fontWeight:600 }} disabled={!texto.trim()}>Usar esta lista</button>
+          </div>
+        </div>
+        <div style={{ padding:"0 20px 16px", display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+          <span style={{ fontWeight:700, fontSize:15 }}>🔎 2. Conferir na Segware</span>
+          <select value={empresa} onChange={e => setEmpresa(e.target.value)} style={sel}><option value="">Qualquer filial (escolhe a conta pelo nome)</option>{Object.entries(EMPRESAS_SEGWARE).map(([id, n]) => <option key={id} value={id}>Só {n}</option>)}</select>
+          {!prog ? <button onClick={conferir} disabled={!clientes.length} style={{ ...sel, fontWeight:800, background: clientes.length ? "#0ea5e9" : "var(--card)", color: clientes.length ? "#fff" : "var(--tx)", border:"none" }}>Conferir {clientes.length || ""} clientes</button>
+            : <><div style={{ flex:1, minWidth:160, height:8, borderRadius:99, background:"rgba(var(--ink),0.08)" }}><div style={{ width:(prog.feitos / prog.tot * 100) + "%", height:"100%", borderRadius:99, background:"#0ea5e9", transition:"width .3s" }} /></div>
+               <span style={{ fontSize:13, fontWeight:600 }}>{prog.feitos} / {prog.tot}</span><button onClick={() => { parar.current = true; }} style={sel}>Parar</button></>}
+        </div>
+        {erro && <div style={{ margin:"0 20px 16px", padding:"10px 14px", borderRadius:10, background:"rgba(239,68,68,0.08)", color:"#ef4444", fontSize:13 }}>{erro}</div>}
+      </Card>
+
+      {res.length > 0 && <>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:14, marginBottom:16 }}>
+          <KPICard label="Clientes conferidos" value={res.length} sub={temCanais ? res.reduce((n, r) => n + (r.canais || 0), 0) + " canais" : ""} icon="📋" accent="#0ea5e9" />
+          <KPICard label="Desabilitados" value={cont("🔴")} sub={temCanais ? res.filter(r => r.situacao.startsWith("🔴")).reduce((n, r) => n + (r.canais || 0), 0) + " canais ainda no servidor" : "monitoramento desligado no Sigma"} icon="🔴" accent="#ef4444" />
+          <KPICard label="Sem eventos +7 dias" value={cont("🟡")} sub="habilitados, mas sem comunicação" icon="🟡" accent="#f59e0b" />
+          <KPICard label="Não encontrados" value={cont("⚪") + cont("⚠️")} sub="código não existe nas nossas empresas" icon="⚪" accent="#64748b" />
+          <KPICard label="Nome diferente" value={cont("conferir")} sub="nome da lista ≠ nome no Sigma" icon="🔍" accent="#8b5cf6" />
+        </div>
+        <Card>
+          <div style={{ padding:"14px 16px", display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            {[["todos", "Todos", res.length], ["🔴", "🔴 Desabilitados", cont("🔴")], ["🟡", "🟡 Sem eventos", cont("🟡")], ["🟢", "🟢 OK", cont("🟢")], ["⚪", "⚪ Não encontrados", cont("⚪")], ["conferir", "🔍 Nome diferente", cont("conferir")]].map(([k, l, n]) =>
+              <button key={k} onClick={() => setFiltro(k)} style={{ padding:"5px 12px", borderRadius:999, border:"1px solid " + (filtro === k ? "#0ea5e9" : "var(--border)"), background: filtro === k ? "rgba(14,165,233,0.12)" : "var(--card)", color:"var(--tx)", fontSize:12, fontWeight:700, cursor:"pointer" }}>{l} ({n})</button>)}
+            <button onClick={exportar} style={{ ...sel, marginLeft:"auto", fontWeight:700 }}>⬇ Excel ({lista.length})</button>
+          </div>
+          <div className="table-scroll" style={{ maxHeight:620, overflowY:"auto" }}><table style={{ width:"100%", borderCollapse:"collapse" }}>
+            <thead><tr><th style={th}>Conta</th><th style={th}>Cliente (lista)</th>{temCanais && <th style={th}>Canais</th>}<th style={th}>Filial</th><th style={th}>Nome no Sigma</th><th style={th}>Situação</th><th style={th}>Último evento</th><th style={th}>Nome</th></tr></thead>
+            <tbody>{lista.map(r => (
+              <React.Fragment key={r.codigo}>
+                <tr onClick={() => setAberta(aberta === r.codigo ? null : r.codigo)} style={{ cursor:"pointer", background:corSit(r.situacao) }}>
+                  <td style={{ ...td, fontWeight:800, fontFamily:"monospace" }}>{r.codigo}</td>
+                  <td style={{ ...td, fontWeight:600 }}>{r.nome || "—"}</td>
+                  {temCanais && <td style={td}>{r.canais}</td>}
+                  <td style={{ ...td, whiteSpace:"nowrap" }}>{r.filial || "—"}</td>
+                  <td style={{ ...td, maxWidth:320 }}>{r.nomeSigma || "—"}</td>
+                  <td style={{ ...td, fontWeight:700 }}>{r.situacao}</td>
+                  <td style={{ ...td, whiteSpace:"nowrap" }}>{r.ultimo ? r.ultimo.toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", year:"2-digit", hour:"2-digit", minute:"2-digit" }) : "—"}</td>
+                  <td style={{ ...td, color: r.conferencia.startsWith("Conferir") ? "#b45309" : td.color, fontWeight: r.conferencia.startsWith("Conferir") ? 700 : 400, whiteSpace:"nowrap" }}>{r.conferencia}</td>
+                </tr>
+                {aberta === r.codigo && <tr><td colSpan={temCanais ? 8 : 7} style={{ padding:"8px 24px 14px", background:"rgba(14,165,233,0.04)", fontSize:12.5 }}>
+                  {r.obs && <div style={{ marginBottom:8 }}><b>Observação no Sigma:</b> {r.obs}</div>}
+                  <b>Outras contas com o código {r.codigo} na Segware:</b> {r.outras && r.outras.length ? <ul style={{ margin:"4px 0 0 16px", padding:0 }}>{r.outras.map(x => <li key={x.id}>{EMPRESAS_SEGWARE[x.companyId] || "empresa " + x.companyId} · {x.tradeName} · {x.enabled ? "habilitado" : "desabilitado"} · último evento {x.lastEventReceptionDate ? new Date(String(x.lastEventReceptionDate).replace(/([+-]\d\d)(\d\d)$/, "$1:$2")).toLocaleDateString("pt-BR") : "—"}</li>)}</ul> : " nenhuma."}
+                </td></tr>}
+              </React.Fragment>))}</tbody>
+          </table></div>
+        </Card>
+      </>}
+      <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
+        Consulta direto no cadastro da Segware (campo de monitoramento habilitado e data do último evento recebido). O mesmo código pode existir em mais de uma filial — sem filial escolhida, fica a conta cujo nome mais se parece com o da lista (as outras aparecem ao clicar na linha).
+        "Ainda envia eventos" = desabilitado no Sigma, mas o equipamento comunicou nos últimos 2 dias (os eventos são fechados automaticamente e ninguém vê).
+      </div>
+    </div>
+  );
+}
+
 // ── Tipo de cliente: condomínios da Hiseg × nossos condomínios × demais clientes (pelo nome na Segware) ──
 const GRUPOS_CLIENTE = [
   { key:"hiseg",  label:"Hiseg Ceará",  icone:"🏢", cor:"#a855f7" },
@@ -6971,6 +7172,7 @@ const TAB_TITLES={
   clientes:"Clientes",
   saudeCliente:"Saúde do Cliente",
   analiseEventos:"Análise de Eventos",
+  conferencia:"Conferir lista",
   central:"Central",
   guardia:"GuardIA",
   logsOperadores:"Logs dos operadores",
@@ -6990,6 +7192,7 @@ const TAB_SUBTITLES={
   clientes:"Cadastro e situação financeira dos clientes",
   saudeCliente:"Disparos, queda de energia, bateria, comunicação e clientes sem armar",
   analiseEventos:"Disparos, queda de energia, bateria e comunicação — semana contra semana",
+  conferencia:"Suba uma lista de clientes (ex.: CSV do servidor SIM) e confira na Segware se o monitoramento está habilitado",
   central:"Tempo de atendimento, ocorrências e desempenho dos operadores",
   guardia:"Desempenho e evolução da IA (GuardIA) na central",
   logsOperadores:"O que cada operador escreveu nas ocorrências e quanto veio do Operador Bot",
@@ -7017,6 +7220,7 @@ const SIDEBAR_NAV=[
     { key:"clientes", label:"Clientes", icon:"👥", accent:"#10b981", badgeKey:"clientsCount" },
     { key:"saudeCliente", label:"Saúde do Cliente", icon:"💚", accent:"#ef4444" },
     { key:"analiseEventos", label:"Análise de Eventos", icon:"📊", accent:"#f59e0b" },
+    { key:"conferencia", label:"Conferir lista", icon:"🔎", accent:"#14b8a6" },
   ]},
   { standalone:true, key:"relatorios", label:"Relatórios", icon:"📋" },
   { groupKey:"admin", groupLabel:"Administração", groupIcon:"⚙️", adminOnly:true, items:[
@@ -7613,6 +7817,7 @@ function App() {
       {aba==="guardia"&&<GuardiaTab supabaseClient={supabaseClient} />}
       {aba==="logsOperadores"&&<LogsOperadoresTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
+      {aba==="conferencia"&&<ConferenciaTab supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
         confirmLimparSaude={confirmLimparSaude} setConfirmLimparSaude={setConfirmLimparSaude} confirmTextSaude={confirmTextSaude} setConfirmTextSaude={setConfirmTextSaude} handleLimparEventosSaude={handleLimparEventosSaude}
