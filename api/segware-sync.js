@@ -161,7 +161,8 @@ async function gravarLocalizacao(req, res) {
   if (!id || !codigo || !texto || texto.length > 500) return res.status(400).json({ error: "Informe accountId, accountCode e texto (até 500 caracteres)" });
   const tk = (process.env.SEGWARE_TOKEN || "").replace(/[\r\n\t]+/g, "").trim();
   const H = { Authorization: tk.startsWith("Bearer ") ? tk : "Bearer " + tk, Accept: "application/json" };
-  const url = "https://api.segware.com.br/v2/accounts/" + id;
+  const versao = /^v[2-6]$/.test(String(b.versao || "")) ? b.versao : "v6";
+  const url = "https://api.segware.com.br/" + versao + "/accounts/" + id;
   try {
     const r1 = await fetch(url, { headers: H });
     if (!r1.ok) return res.status(502).json({ error: "Segware respondeu " + r1.status + " ao ler a conta" });
@@ -176,7 +177,7 @@ async function gravarLocalizacao(req, res) {
     if (!r2.ok && /invalid_zip_code/.test(t2) && cep && cep.length === 8) {
       r2 = await enviar({ ...conta, address: { ...conta.address, zipCode: cep.slice(0, 5) + "-" + cep.slice(5) } }); t2 = await r2.text();
     }
-    if (!r2.ok) return res.status(200).json({ ok: false, status: r2.status, erro: t2.slice(0, 800), antes });
+    if (!r2.ok) return res.status(200).json({ ok: false, versao, status: r2.status, erro: t2.slice(0, 800), antes, cepLido: conta.address && conta.address.zipCode });
     const depois = await (await fetch(url, { headers: H })).json();
     const outros = Object.keys(conta).filter(k => k !== "alarmPanelLocation" && JSON.stringify(conta[k]) !== JSON.stringify(depois[k]));
     return res.status(200).json({ ok: true, antes, depois: depois.alarmPanelLocation, outrosCamposAlterados: outros });
