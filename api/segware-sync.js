@@ -169,8 +169,13 @@ async function gravarLocalizacao(req, res) {
     if (String(conta.accountCode || "").toUpperCase() !== codigo) return res.status(409).json({ error: "A conta " + id + " não é a " + codigo });
     const antes = conta.alarmPanelLocation || "";
     if (b.esperado !== undefined && antes !== String(b.esperado || "")) return res.status(409).json({ error: "A localização mudou desde a prévia — confira de novo", antes });
-    const r2 = await fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ ...conta, alarmPanelLocation: texto }) });
-    const t2 = await r2.text();
+    const enviar = c => fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ ...c, alarmPanelLocation: texto }) });
+    let r2 = await enviar(conta), t2 = await r2.text();
+    // a validação da Segware exige o CEP com máscara (00000-000), mas a leitura devolve sem — reenvia o MESMO CEP só formatado
+    const cep = conta.address && String(conta.address.zipCode || "").replace(/\D/g, "");
+    if (!r2.ok && /invalid_zip_code/.test(t2) && cep && cep.length === 8) {
+      r2 = await enviar({ ...conta, address: { ...conta.address, zipCode: cep.slice(0, 5) + "-" + cep.slice(5) } }); t2 = await r2.text();
+    }
     if (!r2.ok) return res.status(200).json({ ok: false, status: r2.status, erro: t2.slice(0, 800), antes });
     const depois = await (await fetch(url, { headers: H })).json();
     const outros = Object.keys(conta).filter(k => k !== "alarmPanelLocation" && JSON.stringify(conta[k]) !== JSON.stringify(depois[k]));
