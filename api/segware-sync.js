@@ -170,7 +170,9 @@ async function gravarLocalizacao(req, res) {
     if (String(conta.accountCode || "").toUpperCase() !== codigo) return res.status(409).json({ error: "A conta " + id + " não é a " + codigo });
     const antes = conta.alarmPanelLocation || "";
     if (b.esperado !== undefined && antes !== String(b.esperado || "")) return res.status(409).json({ error: "A localização mudou desde a prévia — confira de novo", antes });
-    const enviar = c => fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ ...c, alarmPanelLocation: texto }) });
+    // endereço de cobrança vazio (tudo null) é recusado pela validação de CEP — não envia quando não existe
+    const semCobranca = c => { const x = { ...c }; if (x.chargingAddress && Object.values(x.chargingAddress).every(v => v === null || v === "")) delete x.chargingAddress; return x; };
+    const enviar = c => fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ ...semCobranca(c), alarmPanelLocation: texto }) });
     let r2 = await enviar(conta), t2 = await r2.text();
     // a validação da Segware exige o CEP com máscara (00000-000), mas a leitura devolve sem — reenvia o MESMO CEP só formatado
     const cep = conta.address && String(conta.address.zipCode || "").replace(/\D/g, "");
