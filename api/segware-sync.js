@@ -152,8 +152,38 @@ async function autorizado(req) {
   } catch { return false; }
 }
 
+// Grava a "Localização" do painel de alarme de UMA conta (ex.: dados do DVR). Lê a conta, troca só esse campo,
+// devolve o cadastro igual e confere depois que nada além dele mudou.
+async function gravarLocalizacao(req, res) {
+  let b = req.body || {};
+  if (typeof b === "string") { try { b = JSON.parse(b); } catch { b = {}; } }
+  const id = Number(b.accountId), codigo = String(b.accountCode || "").trim().toUpperCase(), texto = String(b.texto || "").trim();
+  if (!id || !codigo || !texto || texto.length > 500) return res.status(400).json({ error: "Informe accountId, accountCode e texto (até 500 caracteres)" });
+  const tk = (process.env.SEGWARE_TOKEN || "").replace(/[\r\n\t]+/g, "").trim();
+  const H = { Authorization: tk.startsWith("Bearer ") ? tk : "Bearer " + tk, Accept: "application/json" };
+  const url = "https://api.segware.com.br/v2/accounts/" + id;
+  try {
+    const r1 = await fetch(url, { headers: H });
+    if (!r1.ok) return res.status(502).json({ error: "Segware respondeu " + r1.status + " ao ler a conta" });
+    const conta = await r1.json();
+    if (String(conta.accountCode || "").toUpperCase() !== codigo) return res.status(409).json({ error: "A conta " + id + " não é a " + codigo });
+    const antes = conta.alarmPanelLocation || "";
+    if (b.esperado !== undefined && antes !== String(b.esperado || "")) return res.status(409).json({ error: "A localização mudou desde a prévia — confira de novo", antes });
+    const r2 = await fetch(url, { method: "PUT", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ ...conta, alarmPanelLocation: texto }) });
+    const t2 = await r2.text();
+    if (!r2.ok) return res.status(200).json({ ok: false, status: r2.status, erro: t2.slice(0, 800), antes });
+    const depois = await (await fetch(url, { headers: H })).json();
+    const outros = Object.keys(conta).filter(k => k !== "alarmPanelLocation" && JSON.stringify(conta[k]) !== JSON.stringify(depois[k]));
+    return res.status(200).json({ ok: true, antes, depois: depois.alarmPanelLocation, outrosCamposAlterados: outros });
+  } catch (e) { return res.status(500).json({ error: e.message }); }
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
+  if (req.method === "POST") {
+    if (!(await autorizado(req))) return res.status(401).json({ error: "Sessão inválida — faça login no dashboard" });
+    return gravarLocalizacao(req, res);
+  }
   if (req.method !== "GET") return res.status(405).json({ error: "Método não permitido" });
   if (!(await autorizado(req))) return res.status(401).json({ error: "Sessão inválida — faça login no dashboard" });
 
