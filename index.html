@@ -5964,6 +5964,7 @@ function GuardiaTab({ supabaseClient }) {
   const [filial, setFilial] = useState("Todas");
   const [dados, setDados] = useState(null); const [erro, setErro] = useState(""); const [carregando, setCarregando] = useState(false);
   const [filtroDesf, setFiltroDesf] = useState("todas");
+  const [ocAberta, setOcAberta] = useState(null);
   const diaRef = useRef(null), diaInst = useRef(null), horaRef = useRef(null), horaInst = useRef(null);
 
   const carregar = useCallback(() => {
@@ -6122,13 +6123,14 @@ function GuardiaTab({ supabaseClient }) {
           <span style={{ fontWeight:700, fontSize:15, marginRight:6 }}>🧾 Últimas ocorrências da IA</span>
           {[["todas", "Todas", "#0ea5e9"], ...Object.entries(DESFECHOS_IA).map(([kk, v]) => [kk, v.label, v.cor])].map(([kk, l, cor]) => (
             <button key={kk} onClick={() => setFiltroDesf(kk)} style={{ padding:"5px 12px", borderRadius:999, border:"1px solid " + (filtroDesf === kk ? cor : "var(--border)"), background: filtroDesf === kk ? cor + "1f" : "var(--card)", color:"var(--tx)", fontSize:12, fontWeight:700, cursor:"pointer" }}>{l}</button>))}
-          <span style={{ fontSize:12, color:"rgba(var(--ink),0.45)" }}>{recFilt.length} de {recentes.length} mais recentes</span>
+          <span style={{ fontSize:12, color:"rgba(var(--ink),0.45)" }}>{recFilt.length} de {recentes.length} mais recentes · clique numa linha para ver o atendimento</span>
         </div>
         <div className="table-scroll" style={{ maxHeight:460, overflowY:"auto" }}><table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead><tr><th style={thL}>Chegou</th><th style={thL}>Cliente</th><th style={thL}>Evento</th><th style={thL}>O que a IA fez</th><th style={thL}>Fechou</th><th style={th}>Assumiu em</th><th style={th}>Total</th><th style={th}>Coment. IA</th></tr></thead>
-          <tbody>{recFilt.length === 0 ? <tr><td style={tdL} colSpan={8}>{carregando ? "Carregando…" : "Nenhuma ocorrência."}</td></tr> : recFilt.map(r => (
-            <tr key={r.recebida + r.codigo_cliente}>
-              <td style={{ ...tdL, whiteSpace:"nowrap" }}>{new Date(r.recebida).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</td>
+          <tbody>{recFilt.length === 0 ? <tr><td style={tdL} colSpan={8}>{carregando ? "Carregando…" : "Nenhuma ocorrência."}</td></tr> : recFilt.map((r, i) => (
+            <React.Fragment key={r.recebida + r.codigo_cliente + i}>
+            <tr onClick={() => r.segware_id && setOcAberta(ocAberta === i ? null : i)} style={{ cursor: r.segware_id ? "pointer" : "default", background: ocAberta === i ? "rgba(14,165,233,0.06)" : "transparent" }}>
+              <td style={{ ...tdL, whiteSpace:"nowrap" }}>{r.segware_id ? (ocAberta === i ? "▾ " : "▸ ") : ""}{new Date(r.recebida).toLocaleString("pt-BR", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" })}</td>
               <td style={tdL}><div style={{ fontWeight:600, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.nome_cliente}>{r.nome_cliente}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>conta {r.codigo_cliente}</div></td>
               <td style={tdL}><div style={{ maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={r.descricao}>{r.descricao}</div><div style={{ fontSize:11, color:"rgba(var(--ink),0.45)" }}>{r.tipo}{r.teve_desl ? " · 🚓 deslocamento" : ""}</div></td>
               <td style={tdL}>{badge(r.desfecho)}</td>
@@ -6136,7 +6138,9 @@ function GuardiaTab({ supabaseClient }) {
               <td style={td}>{fmtDur(r.t_ate_atender)}</td>
               <td style={td}>{fmtDur(r.t_atendimento)}</td>
               <td style={td}>{r.coment_ia}</td>
-            </tr>))}</tbody>
+            </tr>
+            {ocAberta === i && r.segware_id && <tr><td colSpan={8} style={{ padding:0, background:"rgba(14,165,233,0.03)" }}><LinhaTempoOcorrencia id={r.segware_id} supabaseClient={supabaseClient} /></td></tr>}
+            </React.Fragment>))}</tbody>
         </table></div>
       </Card>
       <div style={{ marginTop:12, fontSize:11.5, color:"rgba(var(--ink),0.45)", lineHeight:1.6 }}>
