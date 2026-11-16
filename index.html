@@ -677,6 +677,7 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [loadingObs, setLoadingObs] = useState(true);
+  const [atendentes, setAtendentes] = useState({});
   const [somenteEstePeriodo, setSomenteEstePeriodo] = useState(true);
   // -- Semana/mês que está sendo exibido no momento. Começa no período que veio
   // da lista de Comparativos, mas o usuário pode clicar em outra barra da
@@ -705,6 +706,24 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
     }
     loadObs();
   }, [cliente.codigo_cliente, cliente.filial]);
+
+  useEffect(() => {
+    if (!cliente || !supabaseClient) return;
+    const manuais = dispatchesFiltrados.filter(d => {
+      const dt = parseDataHora(d.data_hora);
+      if (!dt || keyFn(dt) !== periodoSelecionado) return false;
+      if (d.codigo_cliente !== cliente.codigo_cliente || d.filial !== cliente.filial) return false;
+      return /GERADO MANUALMENTE/i.test(d.evento || "");
+    });
+    if (!manuais.length) { setAtendentes({}); return; }
+    const ts = manuais.map(d => { const x = parseDataHora(d.data_hora); return x ? x.getTime() : null; }).filter(Boolean);
+    const desde = new Date(Math.min(...ts) - 120000).toISOString();
+    const ate = new Date(Math.max(...ts) + 120000).toISOString();
+    let cancel = false;
+    supabaseClient.rpc("deslocamento_atendente", { p_codigo: cliente.codigo_cliente, p_filial: cliente.filial, p_desde: desde, p_ate: ate })
+      .then(({ data }) => { if (cancel) return; const m = {}; (data || []).forEach(r => { if (r.operador) m[r.chave] = r.operador; }); setAtendentes(m); });
+    return () => { cancel = true; };
+  }, [cliente && cliente.codigo_cliente, cliente && cliente.filial, periodoSelecionado]);
 
   async function salvarObs() {
     if(!novaObs.trim()) return;
@@ -923,14 +942,14 @@ function ComparativoClienteModal({ cliente, periodoKey, keyFn, labelFn, dispatch
           <div>
             <div style={{ fontSize:10,fontWeight:700,letterSpacing:"0.15em",textTransform:"uppercase",color:"rgba(var(--ink),0.35)",marginBottom:12 }}>Eventos de {labelFn(periodoSelecionado)} ({meusDeslocs.length})</div>
             <div style={{ display:"flex",flexDirection:"column",gap:5,maxHeight:200,overflowY:"auto" }}>
-              {meusDeslocs.map((d,i)=>(
+              {meusDeslocs.map((d,i)=>{ const at=atendentes[(d.evento||"")+"||"+String(d.data_hora||"")]; return (
                 <div key={i} style={{ display:"flex",justifyContent:"space-between",padding:"7px 12px",background:"var(--card)",borderRadius:8,fontSize:11 }}>
-                  <span style={{ color:"rgba(var(--ink),0.75)" }}>{d.evento}</span>
+                  <span style={{ color:"rgba(var(--ink),0.75)",minWidth:0 }}>{d.evento}{at&&<span style={{ marginLeft:8,color:"#0ea5e9",fontWeight:600 }}>· 👤 {at}</span>}</span>
                   <div style={{ display:"flex",gap:14,color:"rgba(var(--ink),0.3)",flexShrink:0,marginLeft:12 }}>
                     <span>{d.viatura}</span><span>{String(d.data_hora||"")}</span>
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           </div>
         )}
