@@ -7248,9 +7248,9 @@ const TAB_SUBTITLES={
 const SIDEBAR_NAV=[
   { standalone:true, key:"dashboard", label:"Dashboard", icon:"📊" },
   { groupKey:"operacao", groupLabel:"Operação", groupIcon:"🚦", items:[
-    { key:"central", label:"Central", icon:"🎧", accent:"#0ea5e9" },
-    { key:"guardia", label:"GuardIA", icon:"🤖", accent:"#14b8a6" },
-    { key:"logsOperadores", label:"Logs dos operadores", icon:"🧾", accent:"#ef4444" },
+    { key:"central", label:"Central", icon:"🎧", accent:"#0ea5e9", adminOnly:true },
+    { key:"guardia", label:"GuardIA", icon:"🤖", accent:"#14b8a6", adminOnly:true },
+    { key:"logsOperadores", label:"Logs dos operadores", icon:"🧾", accent:"#ef4444", adminOnly:true },
     { key:"analiseDeslocamento", label:"Deslocamentos", icon:"🚦", accent:"#6366f1" },
     { key:"portaria", label:"Portaria Inteligente", icon:"🏢", accent:"#8b5cf6", badgeKey:"piCount" },
     { key:"filiais", label:"Filiais", icon:"🏢", accent:"#06b6d4" },
@@ -7858,9 +7858,9 @@ function App() {
       {aba==="mapa"&&<MapaCalorTab clients={clients} dispatches={dispatches} />}
       {aba==="comparativos"&&<ComparativosTab dispatches={dispatches} clients={clients} />}
       {aba==="saudeCliente"&&<SaudeClienteTab clients={clients} eventosSaude={eventosSaude} />}
-      {aba==="central"&&<CentralTab supabaseClient={supabaseClient} />}
-      {aba==="guardia"&&<GuardiaTab supabaseClient={supabaseClient} />}
-      {aba==="logsOperadores"&&<LogsOperadoresTab supabaseClient={supabaseClient} />}
+      {aba==="central"&&isAdmin&&<CentralTab supabaseClient={supabaseClient} />}
+      {aba==="guardia"&&isAdmin&&<GuardiaTab supabaseClient={supabaseClient} />}
+      {aba==="logsOperadores"&&isAdmin&&<LogsOperadoresTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="conferencia"&&<ConferenciaTab supabaseClient={supabaseClient} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
