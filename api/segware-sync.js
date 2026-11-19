@@ -1,4 +1,5 @@
 // Sincronização Segware → Dashboard VTR.
+// redeploy 2026-11-19T13:20:48.293Z
 // Busca as ocorrências de uma janela na Segware (lado servidor) e devolve, já filtrado:
 //  - deslocamentos: viatura chegou no local (igual ao relatório "Deslocamento de viaturas")
 //  - eventos: bateria, comunicação, queda de energia e disparos (Saúde do Cliente / Análise de Eventos)
