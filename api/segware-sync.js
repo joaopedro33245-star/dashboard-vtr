@@ -229,8 +229,8 @@ export default async function handler(req, res) {
       const ta = await ra.text(); let ja = {}; try { ja = JSON.parse(ta); } catch {}
       if (!ra.ok) return res.status(502).json({ error: "Login do Sigma falhou (" + ra.status + ")", detalhe: ta.slice(0, 200) });
       if (ja && ja.tempToken && !ja.token) return res.status(502).json({ error: "O usuário do Sigma exige verificação em duas etapas (2FA). Use um usuário dedicado sem 2FA." });
-      const bruto = (ja && (ja.token || ja.accessToken || ja.jwt)) || (typeof ja === "string" ? ja : null) || ra.headers.get("authorization");
-      if (!bruto) return res.status(502).json({ error: "Login do Sigma não retornou token", chaves: ja && typeof ja === "object" ? Object.keys(ja).slice(0, 20) : null });
+      const bruto = (ja && (ja.token || ja.accessToken || ja.jwt || ja.access_token || ja.jwtToken || ja.id_token)) || (typeof ja === "string" && ja ? ja : null) || ra.headers.get("authorization") || ra.headers.get("x-auth-token") || ra.headers.get("token") || ra.headers.get("access-token");
+      if (!bruto) return res.status(502).json({ error: "Login do Sigma não retornou token", diagStatus: ra.status, diagHeaders: [...ra.headers.keys()], diagCT: ra.headers.get("content-type"), diagBodyLen: ta.length, diagBody: ta.slice(0, 400) });
       const auth = String(bruto).startsWith("Bearer ") ? String(bruto) : "Bearer " + bruto;
       const re2 = await fetch("https://api.segware.com.br/v1/equipments/connections/status", { headers: { Authorization: auth, Accept: "application/json" } });
       const t2 = await re2.text();
