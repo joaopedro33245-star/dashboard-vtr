@@ -6501,6 +6501,157 @@ function avaliarConta(cli, contas, empresa) {
     obs:String(b.x.localObservations || b.x.placeObservation || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300), outras:contas.filter(x => x !== b.x) };
 }
 
+const EQUIP_CLASSES = [
+  { v: "manutencao", label: "Em manutenção", cor: "#f59e0b" },
+  { v: "cancelado", label: "Cliente cancelado", cor: "#ef4444" },
+  { v: "verificacao", label: "Em verificação", cor: "#0ea5e9" },
+  { v: "orcamento", label: "Orçamento pendente", cor: "#8b5cf6" },
+];
+const EQUIP_CLASS_MAP = Object.fromEntries(EQUIP_CLASSES.map(c => [c.v, c]));
+
+function fmtUltimaCom(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso); if (isNaN(d)) return "—";
+  return d.toLocaleString("pt-BR", { timeZone: "America/Fortaleza", day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function EquipamentosTab({ supabaseClient, usuario }) {
+  const [lista, setLista] = useState([]);
+  const [resumo, setResumo] = useState(null);
+  const [verif, setVerif] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState("");
+  const [busca, setBusca] = useState("");
+  const [fFilial, setFFilial] = useState("todas");
+  const [fClass, setFClass] = useState("todos");
+  const [atualizadoEm, setAtualizadoEm] = useState(null);
+  const [salvando, setSalvando] = useState({});
+  const quem = (usuario && (usuario.nome || usuario.email)) || "operador";
+
+  const carregarVerif = async () => {
+    try {
+      const { data } = await supabaseClient.from("equip_verificacao").select("*");
+      const m = {}; (data || []).forEach(r => { m[r.equip_id] = r; });
+      setVerif(m);
+    } catch (e) {}
+  };
+
+  const carregar = async () => {
+    setLoading(true); setErro("");
+    try {
+      const s = await supabaseClient.auth.getSession();
+      const tok = s.data && s.data.session && s.data.session.access_token;
+      const r = await fetch("/api/segware-sync?equip=1", { headers: { authorization: "Bearer " + tok } });
+      const j = await r.json();
+      if (!r.ok) { setErro(j.error || "Falha ao consultar a Segware" + (j.detalhe ? " — " + j.detalhe : "")); setLoading(false); return; }
+      setLista(j.lista || []);
+      setResumo({ conectados: j.conectados, desconectados: j.desconectados, total: j.total });
+      setAtualizadoEm(j.atualizadoEm || new Date().toISOString());
+      await carregarVerif();
+    } catch (e) { setErro("Erro: " + e.message); }
+    setLoading(false);
+  };
+
+  useEffect(() => { carregar(); }, []);
+
+  const salvar = async (eq, patch) => {
+    const atual = verif[eq.id] || {};
+    const novo = {
+      equip_id: eq.id, account_code: eq.accountCode || null, account_name: eq.accountName || null,
+      classificacao: atual.classificacao ?? null, observacao: atual.observacao ?? null,
+      ...patch, por: quem, em: new Date().toISOString(),
+    };
+    setVerif(prev => ({ ...prev, [eq.id]: { ...atual, ...novo } }));
+    setSalvando(prev => ({ ...prev, [eq.id]: true }));
+    try { await supabaseClient.from("equip_verificacao").upsert(novo, { onConflict: "equip_id" }); } catch (e) {}
+    setSalvando(prev => { const n = { ...prev }; delete n[eq.id]; return n; });
+  };
+
+  const filiais = Array.from(new Set(lista.map(e => e.filial).filter(Boolean))).sort();
+  const q = busca.trim().toLowerCase();
+  const filtrada = lista.filter(e => {
+    if (fFilial !== "todas" && e.filial !== fFilial) return false;
+    const c = (verif[e.id] || {}).classificacao || "";
+    if (fClass === "sem" && c) return false;
+    if (fClass !== "todos" && fClass !== "sem" && c !== fClass) return false;
+    if (q) {
+      const alvo = ((e.accountCode || "") + " " + (e.accountName || "") + " " + (e.companyName || "") + " " + (e.name || "") + " " + (e.model || "") + " " + (e.manufacturer || "")).toLowerCase();
+      if (!alvo.includes(q)) return false;
+    }
+    return true;
+  });
+  const semClass = lista.filter(e => !((verif[e.id] || {}).classificacao)).length;
+
+  const card = { background: "var(--card)", border: "1px solid var(--border)", borderRadius: 12 };
+  const inp = { background: "var(--bg)", color: "rgb(var(--ink))", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", fontSize: 13 };
+
+  return (
+    <div style={{ padding: "4px 2px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20 }}>📡 Equipamentos desconectados</h2>
+          <div style={{ fontSize: 12.5, color: "rgba(var(--ink),0.5)", marginTop: 4 }}>
+            {resumo ? <span><b style={{ color: "#ef4444" }}>{resumo.desconectados}</b> desconectados · {resumo.conectados} conectados · {resumo.total} no total</span> : "—"}
+            {atualizadoEm && <span> · atualizado {new Date(atualizadoEm).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>}
+          </div>
+        </div>
+        <button onClick={carregar} disabled={loading} style={{ ...inp, cursor: "pointer", fontWeight: 600, opacity: loading ? 0.5 : 1 }}>{loading ? "Atualizando…" : "↻ Atualizar"}</button>
+      </div>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar conta, cliente, modelo…" style={{ ...inp, flex: "1 1 240px", minWidth: 0 }} />
+        <select value={fFilial} onChange={e => setFFilial(e.target.value)} style={inp}>
+          <option value="todas">Todas as filiais</option>
+          {filiais.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select value={fClass} onChange={e => setFClass(e.target.value)} style={inp}>
+          <option value="todos">Todas as situações</option>
+          <option value="sem">Sem verificação ({semClass})</option>
+          {EQUIP_CLASSES.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+        </select>
+      </div>
+
+      {erro && <div style={{ ...card, padding: 14, borderColor: "#ef4444", color: "#ef4444", marginBottom: 14, fontSize: 13 }}>{erro}</div>}
+      {loading && !lista.length && <div style={{ ...card, padding: 24, textAlign: "center", color: "rgba(var(--ink),0.5)" }}>Consultando a Segware…</div>}
+      {!loading && !lista.length && !erro && <div style={{ ...card, padding: 24, textAlign: "center", color: "rgba(var(--ink),0.5)" }}>Nenhum equipamento desconectado. 🎉</div>}
+
+      <div style={{ fontSize: 12, color: "rgba(var(--ink),0.4)", marginBottom: 8 }}>{filtrada.length} de {lista.length} equipamentos</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtrada.map(e => {
+          const v = verif[e.id] || {};
+          const cl = EQUIP_CLASS_MAP[v.classificacao];
+          return (
+            <div key={e.id} style={{ ...card, padding: "12px 14px", borderLeft: "4px solid " + (cl ? cl.cor : "#ef4444") }}>
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{e.accountCode} · {e.accountName || "—"}</div>
+                  <div style={{ fontSize: 12, color: "rgba(var(--ink),0.55)", marginTop: 3 }}>
+                    {e.filial || e.companyName} · {e.name || e.tipo}{e.model ? " · " + e.model : ""}{e.manufacturer ? " (" + e.manufacturer + ")" : ""}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "rgba(var(--ink),0.4)", marginTop: 3 }}>
+                    {e.mobileOperator ? "Operadora: " + e.mobileOperator + " · " : ""}Última comunicação: {fmtUltimaCom(e.lastCommunication)}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, alignItems: "center" }}>
+                <select value={v.classificacao || ""} onChange={ev => salvar(e, { classificacao: ev.target.value || null })} style={{ ...inp, padding: "6px 8px", fontSize: 12.5, borderColor: cl ? cl.cor : "var(--border)", fontWeight: cl ? 600 : 400, color: cl ? cl.cor : "rgb(var(--ink))" }}>
+                  <option value="">— Situação —</option>
+                  {EQUIP_CLASSES.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+                </select>
+                <input defaultValue={v.observacao || ""} placeholder="Observação…" onBlur={ev => { if ((ev.target.value || "") !== (v.observacao || "")) salvar(e, { observacao: ev.target.value || null }); }} style={{ ...inp, padding: "6px 8px", fontSize: 12.5, flex: "1 1 240px", minWidth: 0 }} />
+                <span style={{ fontSize: 11, color: "rgba(var(--ink),0.4)", whiteSpace: "nowrap" }}>
+                  {salvando[e.id] ? "salvando…" : (v.por ? "por " + v.por + (v.em ? " · " + new Date(v.em).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : "") : "")}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConferenciaTab({ supabaseClient }) {
   const [clientes, setClientes] = useState([]); const [origem, setOrigem] = useState("");
   const [texto, setTexto] = useState(""); const [empresa, setEmpresa] = useState("");
@@ -7266,6 +7417,7 @@ const SIDEBAR_NAV=[
     { key:"saudeCliente", label:"Saúde do Cliente", icon:"💚", accent:"#ef4444" },
     { key:"analiseEventos", label:"Análise de Eventos", icon:"📊", accent:"#f59e0b" },
     { key:"conferencia", label:"Conferir lista", icon:"🔎", accent:"#14b8a6" },
+    { key:"equipamentos", label:"Equipamentos", icon:"📡", accent:"#f43f5e" },
   ]},
   { standalone:true, key:"relatorios", label:"Relatórios", icon:"📋" },
   { groupKey:"admin", groupLabel:"Administração", groupIcon:"⚙️", adminOnly:true, items:[
@@ -7863,6 +8015,7 @@ function App() {
       {aba==="logsOperadores"&&isAdmin&&<LogsOperadoresTab supabaseClient={supabaseClient} />}
       {aba==="analiseEventos"&&<AnaliseEventosTab clients={clients} eventosSaude={eventosSaude} supabaseClient={supabaseClient} />}
       {aba==="conferencia"&&<ConferenciaTab supabaseClient={supabaseClient} />}
+      {aba==="equipamentos"&&<EquipamentosTab supabaseClient={supabaseClient} usuario={usuario} />}
       {aba==="importacao"&&isAdmin&&<ImportTab onImportClients={handleImportClients} onImportDispatches={handleImportDispatches} onImportEventosSaude={handleImportEventosSaude} clients={clients} dispatches={dispatches} eventosSaude={eventosSaude} supabaseClient={supabaseClient} onRefresh={carregarDados}
         confirmLimparDesl={confirmLimparDesl} setConfirmLimparDesl={setConfirmLimparDesl} confirmTextDesl={confirmTextDesl} setConfirmTextDesl={setConfirmTextDesl} handleLimparDeslocamentos={handleLimparDeslocamentos}
         confirmLimparSaude={confirmLimparSaude} setConfirmLimparSaude={setConfirmLimparSaude} confirmTextSaude={confirmTextSaude} setConfirmTextSaude={setConfirmTextSaude} handleLimparEventosSaude={handleLimparEventosSaude}
