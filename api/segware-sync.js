@@ -54,6 +54,14 @@ function limparNome(s) {
   return String(s || "").trim().replace(/\s*\(.*?\)\s*$/, "").replace(/^\(.*?\)\s*/, "").trim();
 }
 const filialDe = o => EMPRESA_IGNORADA.has(Number(o.companyId)) ? null : (FILIAL_POR_EMPRESA[o.companyId] || FILIAL_POR_ESTADO[semAcento(o.stateName)] || null);
+function filialEquip(cn){
+  const s = semAcento(cn);
+  if (s.includes("CEARA")) return "SERVIS CEARÁ";
+  if (s.includes("SECOPI") || s.includes("PIAUI")) return "SECOPI PIAUÍ";
+  if (s.includes("MARANHAO")) return "SERVIS MARANHÃO";
+  if (s.includes("AMAZONAS")) return "SERVIS AMAZONAS";
+  return cn || null;
+}
 
 function paraDeslocamento(o, filial) {
   const st = Array.isArray(o.statuses) ? o.statuses : [];
@@ -205,6 +213,36 @@ export default async function handler(req, res) {
       const t = await r.text();
       return res.status(200).json({ status: r.status, tipo: r.headers.get("content-type"), corpo: t.slice(0, 200000) });
     } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
+
+  // status de conexão dos equipamentos (precisa de sessão de USUÁRIO do Sigma; o token de integração dá 500 aqui)
+  if (req.query.equip) {
+    const email = (process.env.SIGMA_EMAIL || "").trim(), senha = process.env.SIGMA_PASS || "";
+    if (!email || !senha) return res.status(500).json({ error: "SIGMA_EMAIL/SIGMA_PASS não configurados no Vercel" });
+    try {
+      const ra = await fetch("https://cloud.segware.com.br/server/v3/auth", {
+        method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ type: "WEB", email, password: senha }),
+      });
+      const ta = await ra.text(); let ja = {}; try { ja = JSON.parse(ta); } catch {}
+      if (!ra.ok) return res.status(502).json({ error: "Login do Sigma falhou (" + ra.status + ")", detalhe: ta.slice(0, 200) });
+      if (ja && ja.tempToken && !ja.token) return res.status(502).json({ error: "O usuário do Sigma exige verificação em duas etapas (2FA). Use um usuário dedicado sem 2FA." });
+      const bruto = (ja && (ja.token || ja.accessToken || ja.jwt)) || (typeof ja === "string" ? ja : null) || ra.headers.get("authorization");
+      if (!bruto) return res.status(502).json({ error: "Login do Sigma não retornou token", chaves: ja && typeof ja === "object" ? Object.keys(ja).slice(0, 20) : null });
+      const auth = String(bruto).startsWith("Bearer ") ? String(bruto) : "Bearer " + bruto;
+      const re2 = await fetch("https://api.segware.com.br/v1/equipments/connections/status", { headers: { Authorization: auth, Accept: "application/json" } });
+      const t2 = await re2.text();
+      if (!re2.ok) return res.status(502).json({ error: "Consulta de equipamentos falhou (" + re2.status + ")", detalhe: t2.slice(0, 200) });
+      let j2 = {}; try { j2 = JSON.parse(t2); } catch { return res.status(502).json({ error: "Resposta inválida da Segware" }); }
+      const arr = Array.isArray(j2.equipments) ? j2.equipments : (Array.isArray(j2) ? j2 : []);
+      const lista = arr.filter(e => String(e.communicationStatus || "").toUpperCase() === "DISCONNECTED").map(e => ({
+        id: e.id, accountId: e.accountId, accountCode: e.accountCode, accountName: e.accountName,
+        companyName: e.companyName, name: e.name, manufacturer: e.manufacturer, model: e.model,
+        imei: e.imei, mac: e.mac, serial: e.serial, tipo: e.type, mobileOperator: e.mobileOperator,
+        lastCommunication: e.lastCommunication, communicationStatus: e.communicationStatus, filial: filialEquip(e.companyName),
+      }));
+      return res.status(200).json({ conectados: j2.connected ?? null, desconectados: j2.disconnected ?? lista.length, total: j2.total ?? arr.length, lista, atualizadoEm: new Date().toISOString() });
+    } catch (e) { return res.status(500).json({ error: "Falha ao consultar equipamentos: " + e.message }); }
   }
 
   const { startDate, endDate } = req.query;
